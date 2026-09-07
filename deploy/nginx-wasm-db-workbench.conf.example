@@ -1,0 +1,18 @@
+# Example nginx site snippet for https://{domain}/wasm-db-workbench/
+#
+# Prefer keeping the path prefix (no strip). The app understands BASE_PATH.
+# Do not override Cross-Origin-* headers — the app sets COOP/COEP for WASM.
+
+location = /wasm-db-workbench {
+  return 301 /wasm-db-workbench/;
+}
+
+location /wasm-db-workbench/ {
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  # Keep prefix: app strips BASE_PATH=/wasm-db-workbench itself.
+  proxy_pass http://127.0.0.1:8080;
+}

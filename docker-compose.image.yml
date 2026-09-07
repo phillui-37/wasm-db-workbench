@@ -10,6 +10,7 @@ services:
       DATA_DIR: /app/data
       SCRIPTS_DIR: /app/scripts
       FRONTEND_DIST: /app/frontend/dist
+      BASE_PATH: /wasm-db-workbench
     volumes:
       - ./config:/app/config
       - ./data:/app/data

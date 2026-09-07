@@ -44,5 +44,6 @@ jobs:
             docker.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           build-args: |
             NODE_OPTIONS=--max-old-space-size=4096
+            VITE_BASE_PATH=/wasm-db-workbench/
           cache-from: type=gha
           cache-to: type=gha,mode=max

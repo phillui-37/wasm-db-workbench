@@ -3,6 +3,7 @@ import { NodeContext, NodeHttpServer, NodeRuntime } from "@effect/platform-node"
 import { Config, Effect, Layer } from "effect"
 import { createServer } from "node:http"
 import { ApiLive } from "./http/api-live.ts"
+import { basePathMiddleware, normalizeBasePath } from "./http/base-path.ts"
 import { spaMiddleware } from "./http/static.ts"
 import { StoresLive } from "./layers.ts"
 import { repoRoot } from "./root.ts"
@@ -15,7 +16,12 @@ const HttpLive = Layer.unwrapEffect(
     const dist = yield* Config.string("FRONTEND_DIST").pipe(
       Config.withDefault(`${repoRoot}/frontend/dist`)
     )
-    return HttpApiBuilder.serve((app) => spaMiddleware(dist)(HttpMiddleware.logger(app))).pipe(
+    const basePath = normalizeBasePath(
+      yield* Config.string("BASE_PATH").pipe(Config.withDefault("/wasm-db-workbench"))
+    )
+    return HttpApiBuilder.serve((app) =>
+      basePathMiddleware(basePath)(spaMiddleware(dist)(HttpMiddleware.logger(app)))
+    ).pipe(
       Layer.provide(HttpApiSwagger.layer({ path: "/docs" })),
       Layer.provide(HttpApiBuilder.middlewareCors()),
       Layer.provide(ApiWithStores),

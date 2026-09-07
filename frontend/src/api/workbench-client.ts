@@ -11,7 +11,14 @@ export class WorkbenchClient extends Context.Tag("app/WorkbenchClient")<
   WorkbenchApiClient
 >() {}
 
+/** Vite `base` ends with `/`; API client wants no trailing slash (or ""). */
+const apiBaseUrl = (() => {
+  const base = import.meta.env.BASE_URL || "/"
+  if (base === "/") return ""
+  return base.replace(/\/+$/, "")
+})()
+
 export const WorkbenchClientLive = Layer.effect(
   WorkbenchClient,
-  HttpApiClient.make(WorkbenchApi, { baseUrl: "" })
+  HttpApiClient.make(WorkbenchApi, { baseUrl: apiBaseUrl })
 ).pipe(Layer.provide(FetchHttpClient.layer))
