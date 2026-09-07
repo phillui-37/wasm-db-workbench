@@ -61,6 +61,26 @@ location /wasm-db-workbench/ {
 
 App defaults: `VITE_BASE_PATH=/wasm-db-workbench/`, `BASE_PATH=/wasm-db-workbench`.
 
+### Authentication
+
+Login is required when `AUTH_ENABLED=true` (default in Docker images).
+
+On the VPS, create `.env` next to compose (see `deploy/auth.env.example`):
+
+```bash
+AUTH_USERNAME=admin
+AUTH_PASSWORD=your-strong-password
+AUTH_SECRET=long-random-string
+```
+
+Then `pnpm podman:pull-up`. Open `https://{domain}/wasm-db-workbench/` and sign in.
+
+Local dev defaults to `AUTH_ENABLED=false` (no login). To test auth locally:
+
+```bash
+AUTH_ENABLED=true AUTH_USERNAME=admin AUTH_PASSWORD=secret pnpm start
+```
+
 ## Local dev
 
 ```bash
@@ -89,4 +109,4 @@ See `config/app.yaml`. Important knobs:
 - `query.maxRows`, `query.confirmDestructive`
 - `engines.pglite|sqlite.enabled`
 
-Env overrides: `APP_PORT`, `CONFIG_PATH`, `DATA_DIR`, `SCRIPTS_DIR`, `FRONTEND_DIST`, `BASE_PATH`, `VITE_BASE_PATH` (build-time).
+Env overrides: `APP_PORT`, `CONFIG_PATH`, `DATA_DIR`, `SCRIPTS_DIR`, `FRONTEND_DIST`, `BASE_PATH`, `VITE_BASE_PATH` (build-time), `AUTH_ENABLED`, `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_SECRET`, `AUTH_COOKIE_SECURE`.

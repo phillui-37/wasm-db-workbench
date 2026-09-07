@@ -1,14 +1,19 @@
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "@effect/platform"
 import { Schema } from "effect"
 import {
+  AuthFailedError,
   ConfigIoError,
   ConfigParseError,
   PathUnsafeError,
   ScriptNotFound,
-  SyncNotFound
+  SyncNotFound,
+  UnauthorizedError
 } from "./errors.ts"
 import { AppConfig } from "./schema/config.ts"
 import {
+  AuthLogin,
+  AuthMe,
+  AuthOk,
   ConnectionIdPath,
   Health,
   HistoryEntry,
@@ -24,6 +29,20 @@ import {
 const healthGroup = HttpApiGroup.make("health").add(
   HttpApiEndpoint.get("check", "/health").addSuccess(Health)
 )
+
+const authGroup = HttpApiGroup.make("auth")
+  .add(
+    HttpApiEndpoint.post("login", "/auth/login")
+      .setPayload(AuthLogin)
+      .addSuccess(AuthOk)
+      .addError(AuthFailedError, { status: 401 })
+  )
+  .add(HttpApiEndpoint.post("logout", "/auth/logout").addSuccess(AuthOk))
+  .add(
+    HttpApiEndpoint.get("me", "/auth/me")
+      .addSuccess(AuthMe)
+      .addError(UnauthorizedError, { status: 401 })
+  )
 
 const configGroup = HttpApiGroup.make("config")
   .add(HttpApiEndpoint.get("get", "/config").addSuccess(AppConfig).addError(ConfigParseError, { status: 400 }).addError(ConfigIoError, { status: 500 }))
@@ -112,6 +131,7 @@ const syncGroup = HttpApiGroup.make("sync")
 
 export class WorkbenchApi extends HttpApi.make("workbench")
   .add(healthGroup)
+  .add(authGroup)
   .add(configGroup)
   .add(scriptsGroup)
   .add(historyGroup)

@@ -43,6 +43,8 @@ ENV DATA_DIR=/app/data
 ENV SCRIPTS_DIR=/app/scripts
 ENV FRONTEND_DIST=/app/frontend/dist
 ENV BASE_PATH=/wasm-db-workbench
+ENV AUTH_ENABLED=true
+ENV AUTH_COOKIE_SECURE=true
 
 EXPOSE 8080
 
@@ -65,6 +67,8 @@ ENV DATA_DIR=/app/data
 ENV SCRIPTS_DIR=/app/scripts
 ENV FRONTEND_DIST=/app/frontend/dist
 ENV BASE_PATH=/wasm-db-workbench
+ENV AUTH_ENABLED=true
+ENV AUTH_COOKIE_SECURE=true
 
 EXPOSE 8080
 

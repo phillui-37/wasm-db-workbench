@@ -6,6 +6,23 @@ export const Health = Schema.Struct({
 })
 export type Health = Schema.Schema.Type<typeof Health>
 
+export const AuthLogin = Schema.Struct({
+  username: Schema.String,
+  password: Schema.String
+})
+export type AuthLogin = Schema.Schema.Type<typeof AuthLogin>
+
+export const AuthOk = Schema.Struct({
+  ok: Schema.Literal(true)
+})
+export type AuthOk = Schema.Schema.Type<typeof AuthOk>
+
+export const AuthMe = Schema.Struct({
+  authenticated: Schema.Literal(true),
+  username: Schema.String
+})
+export type AuthMe = Schema.Schema.Type<typeof AuthMe>
+
 export const Script = Schema.Struct({
   connectionId: Schema.String,
   name: Schema.String,

@@ -39,3 +39,9 @@ Desktop.ini
 # transferred container images
 deploy/*.tar
 deploy/*.tar.gz
+
+# local secrets for compose
+.env
+.env.*
+!.env.example
+!deploy/auth.env.example

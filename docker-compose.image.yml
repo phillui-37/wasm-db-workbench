@@ -1,4 +1,5 @@
 # Pull from Docker Hub (no local build). For low-RAM VPS.
+# Put secrets in a sibling `.env` (see deploy/auth.env.example); compose interpolates them.
 services:
   workbench:
     image: docker.io/philluikgy/wasm-db-workbench:latest
@@ -11,6 +12,11 @@ services:
       SCRIPTS_DIR: /app/scripts
       FRONTEND_DIST: /app/frontend/dist
       BASE_PATH: /wasm-db-workbench
+      AUTH_ENABLED: "true"
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
+      AUTH_SECRET: ${AUTH_SECRET:-}
     volumes:
       - ./config:/app/config
       - ./data:/app/data

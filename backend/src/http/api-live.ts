@@ -1,5 +1,5 @@
 import { HttpApiBuilder } from "@effect/platform"
-import { WorkbenchApi } from "@workbench/shared"
+import { AuthFailedError, UnauthorizedError, WorkbenchApi } from "@workbench/shared"
 import { Effect, Layer } from "effect"
 import { ConfigService } from "../config-service.ts"
 import { HistoryStore } from "../history-store.ts"
@@ -8,6 +8,16 @@ import { SyncStore } from "../sync-store.ts"
 
 const HealthLive = HttpApiBuilder.group(WorkbenchApi, "health", (handlers) =>
   handlers.handle("check", () => Effect.succeed({ status: "ok" as const }))
+)
+
+/** Auth routes are handled by authMiddleware (cookies). These handlers satisfy the Layer. */
+const AuthLive = HttpApiBuilder.group(WorkbenchApi, "auth", (handlers) =>
+  handlers
+    .handle("login", () =>
+      Effect.fail(new AuthFailedError({ message: "Use auth middleware login" }))
+    )
+    .handle("logout", () => Effect.succeed({ ok: true as const }))
+    .handle("me", () => Effect.fail(new UnauthorizedError({ message: "Not authenticated" })))
 )
 
 const ConfigLive = HttpApiBuilder.group(WorkbenchApi, "config", (handlers) =>
@@ -52,6 +62,7 @@ const SyncLive = HttpApiBuilder.group(WorkbenchApi, "sync", (handlers) =>
 
 export const ApiLive = HttpApiBuilder.api(WorkbenchApi).pipe(
   Layer.provide(HealthLive),
+  Layer.provide(AuthLive),
   Layer.provide(ConfigLive),
   Layer.provide(ScriptsLive),
   Layer.provide(HistoryLive),

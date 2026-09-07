@@ -11,6 +11,7 @@ import { HealthBadge } from "./HealthBadge.tsx"
 
 type Props = {
   connectionLabel: string
+  authUsername: string
   running: boolean
   canRun: boolean
   hasConnection: boolean
@@ -26,10 +27,12 @@ type Props = {
   onSnippets: () => void
   onBookmark: () => void
   onSettings: () => void
+  onLogout: () => void
 }
 
 export const TopBar = ({
   connectionLabel,
+  authUsername,
   running,
   canRun,
   hasConnection,
@@ -44,7 +47,8 @@ export const TopBar = ({
   onFormat,
   onSnippets,
   onBookmark,
-  onSettings
+  onSettings,
+  onLogout
 }: Props) => (
   <AppBar position="static" color="transparent" elevation={0} className="border-b border-divider">
     <Toolbar variant="dense" className="gap-2 min-h-12">
@@ -54,6 +58,9 @@ export const TopBar = ({
       <HealthBadge />
       <Typography variant="caption" color="text.secondary">
         {connectionLabel}
+      </Typography>
+      <Typography variant="caption" color="text.secondary" className="ml-2">
+        {authUsername}
       </Typography>
       <Stack direction="row" spacing={0.5} className="ml-auto flex-wrap">
         <Button variant="contained" startIcon={<PlayArrow />} disabled={!canRun} onClick={onRun}>
@@ -99,6 +106,7 @@ export const TopBar = ({
           />
         </Button>
         <Button onClick={onSettings}>Settings</Button>
+        <Button onClick={onLogout}>Logout</Button>
       </Stack>
     </Toolbar>
   </AppBar>

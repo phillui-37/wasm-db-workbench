@@ -18,7 +18,11 @@ const apiBaseUrl = (() => {
   return base.replace(/\/+$/, "")
 })()
 
+const CredentialFetchLive = Layer.succeed(FetchHttpClient.RequestInit, {
+  credentials: "include"
+})
+
 export const WorkbenchClientLive = Layer.effect(
   WorkbenchClient,
   HttpApiClient.make(WorkbenchApi, { baseUrl: apiBaseUrl })
-).pipe(Layer.provide(FetchHttpClient.layer))
+).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(CredentialFetchLive))

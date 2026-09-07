@@ -59,7 +59,13 @@ const loadActiveId = (): string | undefined => localStorage.getItem(ACTIVE_ID_KE
 const slug = (name: string) =>
   `${name.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "db"}_${Math.random().toString(36).slice(2, 6)}`
 
-export const Workbench = () => {
+export const Workbench = ({
+  authUsername,
+  onLogout
+}: {
+  authUsername: string
+  onLogout: () => void
+}) => {
   const [config, setConfig] = useState<AppConfig>(defaultAppConfig)
   const [connections, setConnections] = useState<Array<ConnectionMeta>>(loadConnections)
   const [activeId, setActiveId] = useState<string | undefined>(() => {
@@ -383,6 +389,7 @@ export const Workbench = () => {
       <div className="flex h-full flex-col">
       <TopBar
         connectionLabel={active ? `${active.name} · ${active.engine}` : "no connection"}
+        authUsername={authUsername}
         running={running}
         canRun={Boolean(active) && !running && tab?.kind === "sql"}
         hasConnection={Boolean(active)}
@@ -396,6 +403,7 @@ export const Workbench = () => {
         onBookmark={() => saveScript(true)}
         onSnippets={() => setSnippetsOpen(true)}
         onFormat={formatSql}
+        onLogout={onLogout}
         onSync={() =>
           active &&
           runFork(

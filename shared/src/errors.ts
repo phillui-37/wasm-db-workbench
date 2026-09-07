@@ -36,3 +36,11 @@ export class DumpError extends Schema.TaggedError<DumpError>()("DumpError", {
 export class SyncError extends Schema.TaggedError<SyncError>()("SyncError", {
   message: Schema.String
 }) {}
+
+export class UnauthorizedError extends Schema.TaggedError<UnauthorizedError>()("UnauthorizedError", {
+  message: Schema.String
+}) {}
+
+export class AuthFailedError extends Schema.TaggedError<AuthFailedError>()("AuthFailedError", {
+  message: Schema.String
+}) {}
