@@ -1,6 +1,7 @@
 import {
   DumpError,
   emptyQueryResult,
+  lastResult,
   qualifyTable,
   quoteIdent,
   quoteLiteral,
@@ -9,7 +10,9 @@ import {
   type Catalog,
   type CellEdit,
   type EngineApi,
-  type QueryResult
+  type QueryParams,
+  type QueryResult,
+  type ScriptResult
 } from "@workbench/shared"
 import { Effect } from "effect"
 import { dumpSqlFromEngine } from "./dump.ts"
@@ -41,6 +44,11 @@ const toResult = (
   }
 }
 
+const bindArray = (params?: QueryParams): Array<unknown> | undefined => {
+  if (!params) return undefined
+  return Array.isArray(params) ? [...params] : Object.values(params)
+}
+
 export const makePgliteEngine = (connectionId: string): Effect.Effect<EngineApi, SqlExecError> =>
   Effect.gen(function* () {
     const mod = yield* Effect.tryPromise({
@@ -50,14 +58,15 @@ export const makePgliteEngine = (connectionId: string): Effect.Effect<EngineApi,
     const pg = (yield* Effect.tryPromise({
       try: () => mod.PGlite.create(`idb://workbench-${connectionId}`),
       catch: (e) => new SqlExecError({ message: String(e) })
-    })) as PGliteInstance
+    })) as unknown as PGliteInstance
 
-    const queryOne = (sql: string) =>
+    const queryOne = (sql: string, params?: QueryParams) =>
       Effect.tryPromise({
         try: async () => {
           const started = Date.now()
+          const bind = bindArray(params)
           try {
-            const result = await pg.query(sql)
+            const result = bind ? await pg.query(sql, bind) : await pg.query(sql)
             return toResult(started, result.rows ?? [], result.fields ?? [], result.affectedRows)
           } catch {
             await pg.exec(sql)
@@ -67,7 +76,14 @@ export const makePgliteEngine = (connectionId: string): Effect.Effect<EngineApi,
         catch: (e) => new SqlExecError({ message: String(e) })
       })
 
-    const query = (sql: string) => runStatements(sql, queryOne)
+    const query = (sql: string, params?: QueryParams): Effect.Effect<ScriptResult, SqlExecError> => {
+      if (params) {
+        return queryOne(sql, params).pipe(
+          Effect.map((result) => ({ statements: [{ ...result, sql }], durationMs: result.durationMs }))
+        )
+      }
+      return runStatements(sql, (stmt) => queryOne(stmt))
+    }
 
     const introspect = Effect.gen(function* () {
       const tablesRes = yield* query(`
@@ -90,22 +106,43 @@ export const makePgliteEngine = (connectionId: string): Effect.Effect<EngineApi,
          AND tc.table_schema = kcu.table_schema
         WHERE tc.constraint_type = 'PRIMARY KEY'
       `)
-      const pks = new Set(pkRes.rows.map((r) => `${r[0]}.${r[1]}.${r[2]}`))
+      const fkRes = yield* query(`
+        SELECT
+          kcu.table_schema, kcu.table_name, kcu.column_name,
+          ccu.table_name, ccu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+          ON ccu.constraint_name = tc.constraint_name
+         AND ccu.table_schema = tc.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+      `)
+      const pks = new Set(lastResult(pkRes).rows.map((r) => `${r[0]}.${r[1]}.${r[2]}`))
+      const fks = new Map<string, { table: string; column: string }>()
+      for (const row of lastResult(fkRes).rows) {
+        fks.set(`${row[0]}.${row[1]}.${row[2]}`, { table: String(row[3]), column: String(row[4]) })
+      }
       const columnsByTable = new Map<string, Array<Catalog["tables"][number]["columns"][number]>>()
-      for (const row of colRes.rows) {
+      for (const row of lastResult(colRes).rows) {
         const schema = String(row[0])
         const name = String(row[1])
         const key = `${schema}.${name}`
         const list = columnsByTable.get(key) ?? []
+        const colName = String(row[2])
+        const fk = fks.get(`${schema}.${name}.${colName}`)
         list.push({
-          name: String(row[2]),
+          name: colName,
           type: String(row[3]),
           nullable: String(row[4]).toUpperCase() === "YES",
-          pk: pks.has(`${schema}.${name}.${String(row[2])}`)
+          pk: pks.has(`${schema}.${name}.${colName}`),
+          fkTable: fk?.table,
+          fkColumn: fk?.column
         })
         columnsByTable.set(key, list)
       }
-      const tables = tablesRes.rows.map((row) => {
+      const tables = lastResult(tablesRes).rows.map((row) => {
         const schema = String(row[0])
         const name = String(row[1])
         return {
@@ -123,7 +160,6 @@ export const makePgliteEngine = (connectionId: string): Effect.Effect<EngineApi,
       dialect: "pgsql",
       engine: "pglite",
       query,
-      exec: query,
       introspect,
       exportBinary: Effect.tryPromise({
         try: async () => new Uint8Array(await (await pg.dumpDataDir()).arrayBuffer()),
@@ -131,7 +167,7 @@ export const makePgliteEngine = (connectionId: string): Effect.Effect<EngineApi,
       }),
       importBinary: (bytes) =>
         Effect.tryPromise({
-          try: () => pg.loadDataDir(new Blob([bytes])),
+          try: () => pg.loadDataDir(new Blob([bytes.buffer as ArrayBuffer])),
           catch: (e) => new DumpError({ message: String(e) })
         }),
       exportSql: Effect.suspend(() => dumpSqlFromEngine(engine)),

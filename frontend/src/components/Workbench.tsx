@@ -1,33 +1,43 @@
-import { FetchHttpClient, HttpApiClient } from "@effect/platform"
 import {
-  ConnectionHub,
+  analyzeSql,
   applyMaxRows,
+  applyParams,
   defaultAppConfig,
-  isDestructiveSql,
-  isWriteSql,
+  lastResult,
   qualifyTable,
-  WorkbenchApi,
   type AppConfig,
   type Catalog,
   type ConnectionMeta,
   type EngineType,
   type HistoryEntry,
-  type QueryResult,
   type Script,
+  type StatementResult,
   type Table
 } from "@workbench/shared"
 import { Effect, Fiber } from "effect"
+import type { editor } from "monaco-editor"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels"
+import { Snackbar, Tab, Tabs } from "@mui/material"
+import CssBaseline from "@mui/material/CssBaseline"
+import { ThemeProvider } from "@mui/material/styles"
 import { SqlEditor } from "../editor/SqlEditor.tsx"
 import { downloadBytes, downloadText, toCsv } from "../engines/dump.ts"
 import { openEngine } from "../engines/hub.ts"
-import { ConnectionHub as HubTag, runFork, SyncController, workbenchRuntime } from "../runtime.ts"
-import { HealthBadge } from "../atoms.tsx"
-import { ResultsGrid } from "./ResultsGrid.tsx"
-import { SettingsPanel } from "./SettingsPanel.tsx"
+import { ConnectionHub as HubTag, runFork, runPromise, SyncController, WorkbenchClient } from "../runtime.ts"
+import { builtinSnippets } from "../snippets.ts"
+import { workbenchTheme } from "../theme.ts"
+import type { WorkbenchApiClient } from "../api/workbench-client.ts"
+import { ConnectionList } from "./ConnectionList.tsx"
+import { ParamsDialog } from "./ParamsDialog.tsx"
+import { SchemaTree } from "./SchemaTree.tsx"
+import { ScriptList } from "./ScriptList.tsx"
+import { SettingsDrawer } from "./SettingsDrawer.tsx"
+import { SnippetPalette } from "./SnippetPalette.tsx"
+import { SqlResults } from "./SqlResults.tsx"
+import { TopBar } from "./TopBar.tsx"
 
-type Tab =
+type TabState =
   | { id: string; kind: "sql"; title: string; sql: string }
   | { id: string; kind: "data"; title: string; table: Table; page: number }
 
@@ -44,7 +54,6 @@ const saveConnections = (list: Array<ConnectionMeta>) => {
 }
 
 const ACTIVE_ID_KEY = "workbench.activeId"
-
 const loadActiveId = (): string | undefined => localStorage.getItem(ACTIVE_ID_KEY) ?? undefined
 
 const slug = (name: string) =>
@@ -59,19 +68,26 @@ export const Workbench = () => {
     return list.some((c) => c.id === saved) ? saved : list[0]?.id
   })
   const [catalog, setCatalog] = useState<Catalog | undefined>()
-  const [tabs, setTabs] = useState<Array<Tab>>([{ id: "q1", kind: "sql", title: "query.sql", sql: "SELECT 1;\n" }])
+  const [tabs, setTabs] = useState<Array<TabState>>([{ id: "q1", kind: "sql", title: "query.sql", sql: "SELECT 1;\n" }])
   const [activeTab, setActiveTab] = useState("q1")
-  const [result, setResult] = useState<QueryResult | undefined>()
+  const [statements, setStatements] = useState<Array<StatementResult>>([])
+  const [dataStatements, setDataStatements] = useState<Array<StatementResult>>([])
+  const [activeResult, setActiveResult] = useState(0)
   const [message, setMessage] = useState("Ready")
+  const [snack, setSnack] = useState<string | undefined>()
   const [running, setRunning] = useState(false)
   const [history, setHistory] = useState<Array<HistoryEntry>>([])
   const [scripts, setScripts] = useState<Array<Script>>([])
   const [bottom, setBottom] = useState<"results" | "messages" | "history">("results")
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [snippetsOpen, setSnippetsOpen] = useState(false)
   const [newName, setNewName] = useState("local")
   const [newEngine, setNewEngine] = useState<EngineType>("pglite")
+  const [paramNames, setParamNames] = useState<Array<string>>([])
+  const [pendingSql, setPendingSql] = useState<string | undefined>()
   const fiberRef = useRef<Fiber.RuntimeFiber<unknown, unknown> | null>(null)
-  const editorRef = useRef<{ getSelectionSql: () => string | undefined; getValue: () => string } | null>(null)
+  const dataFiberRef = useRef<Fiber.RuntimeFiber<unknown, unknown> | null>(null)
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const configRef = useRef(config)
   configRef.current = config
   const autoOpened = useRef(false)
@@ -80,18 +96,11 @@ export const Workbench = () => {
   const dialect = active?.engine === "sqlite" ? "sqlite" : "pgsql"
   const tab = tabs.find((t) => t.id === activeTab)
 
-  const api = <A, E>(effect: Effect.Effect<A, E>) =>
-    workbenchRuntime.runPromise(effect.pipe(Effect.provide(FetchHttpClient.layer)) as Effect.Effect<A, E>)
-
-  const withClient = <A, E>(
-    use: (
-      client: Awaited<ReturnType<typeof workbenchRuntime.runPromise<HttpApiClient.Client<typeof WorkbenchApi>, never>>>
-    ) => Effect.Effect<A, E>
-  ) =>
-    api(
+  const withClient = <A, E>(use: (client: WorkbenchApiClient) => Effect.Effect<A, E>) =>
+    runPromise(
       Effect.gen(function* () {
-        const client = yield* HttpApiClient.make(WorkbenchApi, { baseUrl: "" })
-        return yield* use(client as never)
+        const client = yield* WorkbenchClient
+        return yield* use(client)
       })
     )
 
@@ -100,8 +109,7 @@ export const Workbench = () => {
       Effect.gen(function* () {
         const hub = yield* HubTag
         const engine = yield* hub.get(id)
-        const next = yield* engine.introspect
-        setCatalog(next)
+        setCatalog(yield* engine.introspect)
       }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
     )
 
@@ -137,7 +145,7 @@ export const Workbench = () => {
         yield* sync.startInterval(meta.id, cfg.sync.intervalSeconds, cfg.sync.format, meta.engine)
       }
       if (cfg.sync.pullOnOpen !== "never") {
-        const client = yield* HttpApiClient.make(WorkbenchApi, { baseUrl: "" })
+        const client = yield* WorkbenchClient
         const files = yield* client.sync.files({ path: { connectionId: meta.id } }).pipe(
           Effect.orElseSucceed(() => [] as Array<{ name: string }>)
         )
@@ -145,9 +153,7 @@ export const Workbench = () => {
           const shouldPull =
             cfg.sync.pullOnOpen === "always" ||
             (cfg.sync.pullOnOpen === "prompt" && confirm(`Pull host dump for ${meta.name}?`))
-          if (shouldPull) {
-            yield* sync.pull(meta.id).pipe(Effect.ignore)
-          }
+          if (shouldPull) yield* sync.pull(meta.id).pipe(Effect.ignore)
         }
       }
     })
@@ -194,47 +200,84 @@ export const Workbench = () => {
       return
     }
     const meta: ConnectionMeta = { id: slug(newName), name: newName, engine: newEngine }
-    const next = [...connections, meta]
-    setConnections(next)
+    setConnections((list) => [...list, meta])
     selectConnection(meta)
   }
 
-  const runSql = (sql: string) => {
+  const renameConnection = (meta: ConnectionMeta) => {
+    const name = prompt("Rename connection", meta.name)
+    if (!name) return
+    setConnections((list) => list.map((c) => (c.id === meta.id ? { ...c, name } : c)))
+    if (activeId === meta.id) setMessage(`Connected · ${name}`)
+  }
+
+  const deleteConnection = (meta: ConnectionMeta) => {
+    if (!confirm(`Delete ${meta.name}?`)) return
+    runFork(
+      Effect.gen(function* () {
+        const hub = yield* HubTag
+        yield* hub.close(meta.id).pipe(Effect.ignore)
+        const sync = yield* SyncController
+        yield* sync.stop(meta.id).pipe(Effect.ignore)
+      })
+    )
+    const next = connections.filter((c) => c.id !== meta.id)
+    setConnections(next)
+    if (activeId === meta.id) {
+      setActiveId(next[0]?.id)
+      setCatalog(undefined)
+      if (next[0]) selectConnection(next[0])
+    }
+  }
+
+  const executeSql = (sql: string, values?: Record<string, unknown>) => {
     if (!active) {
       setMessage("Create a connection first")
       return
     }
-    if (config.query.confirmDestructive && isDestructiveSql(sql) && !confirm("Run destructive SQL?")) return
+    const analysis = analyzeSql(sql)
+    if (config.query.confirmDestructive && analysis.isDestructive && !confirm("Run destructive SQL?")) return
     setRunning(true)
     setBottom("results")
     const started = Date.now()
+    const capped = applyMaxRows(sql, configRef.current.query.maxRows, analysis.statements)
+    const bound =
+      analysis.placeholders.kind === "none" || !values
+        ? { sql: capped, bind: undefined }
+        : applyParams(dialect, capped, values, analysis.placeholders)
     const program = Effect.gen(function* () {
       const hub = yield* HubTag
       const engine = yield* hub.get(active.id)
-      const result = yield* engine.query(applyMaxRows(sql, configRef.current.query.maxRows))
-      setResult(result)
-      setMessage(`OK · ${result.rowCount} rows · ${result.durationMs} ms`)
-      const client = yield* HttpApiClient.make(WorkbenchApi, { baseUrl: "" })
+      const result = yield* engine.query(bound.sql, bound.bind)
+      const withCols = result.statements.filter((s) => s.columns.length > 0)
+      setStatements(withCols.length > 0 ? [...withCols] : [...result.statements])
+      setActiveResult(0)
+      const last = lastResult(result)
+      setMessage(`OK · ${last.rowCount} rows · ${result.durationMs} ms`)
+      const client = yield* WorkbenchClient
       const entry = yield* client.history.append({
         path: { connectionId: active.id },
-        payload: { sql, durationMs: result.durationMs, ok: true, rowCount: result.rowCount }
+        payload: { sql, durationMs: result.durationMs, ok: true, rowCount: last.rowCount }
       })
       setHistory((h) => [entry, ...h])
-      if (isWriteSql(sql)) {
-        const cat = yield* engine.introspect
-        setCatalog(cat)
+      if (analysis.isDdl) {
+        setCatalog(yield* engine.introspect)
       }
       const sync = yield* SyncController
-      if (configRef.current.sync.trigger === "onChange" && isWriteSql(sql)) {
-        yield* sync.notifyChange(active.id, configRef.current.sync.debounceMs, configRef.current.sync.format, active.engine)
+      if (configRef.current.sync.trigger === "onChange" && analysis.isWrite) {
+        yield* sync.notifyChange(
+          active.id,
+          configRef.current.sync.debounceMs,
+          configRef.current.sync.format,
+          active.engine
+        )
       }
     }).pipe(
-      Effect.provide(FetchHttpClient.layer),
       Effect.catchAll((e) =>
         Effect.gen(function* () {
           setMessage(String(e))
           setBottom("messages")
-          const client = yield* HttpApiClient.make(WorkbenchApi, { baseUrl: "" })
+          const client = yield* WorkbenchClient
           yield* client.history
             .append({
               path: { connectionId: active.id },
@@ -248,21 +291,52 @@ export const Workbench = () => {
     fiberRef.current = runFork(program)
   }
 
-  const cancel = () => {
-    if (fiberRef.current) runFork(Fiber.interrupt(fiberRef.current))
-    setRunning(false)
-    setMessage("Cancelled")
+  const runSql = (sql: string) => {
+    const { placeholders } = analyzeSql(sql)
+    if (placeholders.kind === "named") {
+      setPendingSql(sql)
+      setParamNames(placeholders.names)
+      return
+    }
+    if (placeholders.kind === "positional") {
+      setPendingSql(sql)
+      setParamNames(Array.from({ length: placeholders.count }, (_, i) => String(i + 1)))
+      return
+    }
+    executeSql(sql)
   }
 
-  const saveScript = () => {
+  const runActive = () => {
+    if (tab?.kind !== "sql") return
+    const selected = editorRef.current?.getModel()?.getValueInRange(editorRef.current.getSelection()!)
+    runSql((selected && selected.trim()) || editorRef.current?.getValue() || tab.sql)
+  }
+
+  const formatSql = () => {
+    if (tab?.kind !== "sql") return
+    void import("sql-formatter")
+      .then(({ format }) => {
+        const next = format(editorRef.current?.getValue() || tab.sql, {
+          language: dialect === "pgsql" ? "postgresql" : "sqlite"
+        })
+        editorRef.current?.setValue(next)
+        setTabs((list) => list.map((t) => (t.id === tab.id && t.kind === "sql" ? { ...t, sql: next } : t)))
+      })
+      .catch((e) => setMessage(String(e)))
+  }
+
+  const saveScript = (pinned?: boolean) => {
     if (!active || tab?.kind !== "sql") return
     const name = prompt("Script name", tab.title.replace(/\.sql$/, ""))
     if (!name) return
     void withClient((client) =>
-      client.scripts.put({ path: { connectionId: active.id, name }, payload: { sql: tab.sql } })
+      client.scripts.put({
+        path: { connectionId: active.id, name },
+        payload: { sql: editorRef.current?.getValue() || tab.sql, pinned }
+      })
     ).then((s) => {
       setScripts((list) => [...list.filter((x) => x.name !== s.name), s])
-      setMessage(`Saved ${s.name}.sql`)
+      setSnack(`Saved ${s.name}.sql`)
     })
   }
 
@@ -277,248 +351,177 @@ export const Workbench = () => {
     if (!active || !dataPage) return
     const qtable = qualifyTable(dialect, dataPage.table.schema, dataPage.table.name)
     const offset = dataPage.page * config.query.maxRows
-    runFork(
+    if (dataFiberRef.current) runFork(Fiber.interrupt(dataFiberRef.current))
+    dataFiberRef.current = runFork(
       Effect.gen(function* () {
         const hub = yield* HubTag
         const engine = yield* hub.get(active.id)
         const res = yield* engine.query(`SELECT * FROM ${qtable} LIMIT ${config.query.maxRows} OFFSET ${offset}`)
-        setResult(res)
+        setDataStatements([...res.statements])
       }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
     )
+    return () => {
+      if (dataFiberRef.current) runFork(Fiber.interrupt(dataFiberRef.current))
+    }
   }, [activeId, dataPage?.id, dataPage?.page, config.query.maxRows])
 
-  const groupedTables = useMemo(() => {
-    const map = new Map<string, Array<Table>>()
-    for (const table of catalog?.tables ?? []) {
-      const list = map.get(table.schema) ?? []
-      list.push(table)
-      map.set(table.schema, list)
-    }
-    return [...map.entries()]
-  }, [catalog])
+  const snippetItems = useMemo(
+    () => [
+      ...builtinSnippets.map((s) => ({ name: s.name, sql: s.sql })),
+      ...scripts.map((s) => ({ name: s.name, sql: s.sql }))
+    ],
+    [scripts]
+  )
+
+  const activeStatement = (tab?.kind === "data" ? dataStatements : statements)[activeResult]
+
+  const theme = useMemo(() => workbenchTheme(config.editor.theme), [config.editor.theme])
 
   return (
-    <div className={`app ${config.editor.theme}`}>
-      <header className="topbar">
-        <strong>WASM SQL Workbench</strong>
-        <HealthBadge />
-        <span className="muted">{active ? `${active.name} · ${active.engine}` : "no connection"}</span>
-        <div className="spacer" />
-        <button type="button" disabled={!active || running} onClick={() => {
-          if (tab?.kind === "sql") {
-            const selected = editorRef.current?.getSelectionSql()
-            runSql((selected && selected.trim()) || editorRef.current?.getValue() || tab.sql)
-          }
-        }}>
-          Run
-        </button>
-        <button type="button" disabled={!running} onClick={cancel}>
-          Cancel
-        </button>
-        <button type="button" disabled={!active} onClick={saveScript}>
-          Save script
-        </button>
-        <button
-          type="button"
-          disabled={!active}
-          onClick={() =>
-            active &&
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <div className="flex h-full flex-col">
+      <TopBar
+        connectionLabel={active ? `${active.name} · ${active.engine}` : "no connection"}
+        running={running}
+        canRun={Boolean(active) && !running && tab?.kind === "sql"}
+        hasConnection={Boolean(active)}
+        onRun={runActive}
+        onCancel={() => {
+          if (fiberRef.current) runFork(Fiber.interrupt(fiberRef.current))
+          setRunning(false)
+          setMessage("Cancelled")
+        }}
+        onSave={() => saveScript()}
+        onBookmark={() => saveScript(true)}
+        onSnippets={() => setSnippetsOpen(true)}
+        onFormat={formatSql}
+        onSync={() =>
+          active &&
+          runFork(
+            Effect.gen(function* () {
+              const sync = yield* SyncController
+              yield* sync.push(active.id, config.sync.format, active.engine)
+              setSnack("Synced to host")
+            }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
+          )
+        }
+        onPull={() =>
+          active &&
+          runFork(
+            Effect.gen(function* () {
+              const sync = yield* SyncController
+              yield* sync.pull(active.id)
+              refreshCatalog(active.id)
+              setSnack("Pulled from host")
+            }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
+          )
+        }
+        onExportSql={() =>
+          active &&
+          runFork(
+            Effect.gen(function* () {
+              const hub = yield* HubTag
+              const engine = yield* hub.get(active.id)
+              downloadText(`${active.name}.sql`, yield* engine.exportSql, "application/sql")
+            }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
+          )
+        }
+        onExportDb={() =>
+          active &&
+          runFork(
+            Effect.gen(function* () {
+              const hub = yield* HubTag
+              const engine = yield* hub.get(active.id)
+              const bytes = yield* engine.exportBinary
+              downloadBytes(active.engine === "sqlite" ? `${active.name}.sqlite` : `${active.name}.tar.gz`, bytes)
+            }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
+          )
+        }
+        onImport={(file) => {
+          if (!active) return
+          void file.arrayBuffer().then((buf) => {
             runFork(
               Effect.gen(function* () {
-                const sync = yield* SyncController
-                yield* sync.push(active.id, config.sync.format, active.engine)
-                setMessage("Synced to host")
-              }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
-            )
-          }
-        >
-          Sync
-        </button>
-        <button
-          type="button"
-          disabled={!active}
-          onClick={() =>
-            active &&
-            runFork(
-              Effect.gen(function* () {
-                const sync = yield* SyncController
-                yield* sync.pull(active.id)
+                const hub = yield* HubTag
+                const engine = yield* hub.get(active.id)
+                if (file.name.endsWith(".sql") || file.type.includes("sql")) {
+                  yield* engine.importSql(new TextDecoder().decode(buf))
+                } else {
+                  yield* engine.importBinary(new Uint8Array(buf))
+                }
                 refreshCatalog(active.id)
-                setMessage("Pulled from host")
+                setSnack(`Imported ${file.name}`)
               }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
             )
-          }
-        >
-          Pull
-        </button>
-        <button
-          type="button"
-          disabled={!active}
-          onClick={() =>
-            active &&
-            runFork(
-              Effect.gen(function* () {
-                const hub = yield* HubTag
-                const engine = yield* hub.get(active.id)
-                const sql = yield* engine.exportSql
-                downloadText(`${active.name}.sql`, sql, "application/sql")
-              }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
-            )
-          }
-        >
-          Export SQL
-        </button>
-        <button
-          type="button"
-          disabled={!active}
-          onClick={() =>
-            active &&
-            runFork(
-              Effect.gen(function* () {
-                const hub = yield* HubTag
-                const engine = yield* hub.get(active.id)
-                const bytes = yield* engine.exportBinary
-                downloadBytes(active.engine === "sqlite" ? `${active.name}.sqlite` : `${active.name}.tar.gz`, bytes)
-              }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
-            )
-          }
-        >
-          Export DB
-        </button>
-        <label className="file">
-          Import
-          <input
-            type="file"
-            onChange={(ev) => {
-              const file = ev.target.files?.[0]
-              if (!file || !active) return
-              void file.arrayBuffer().then((buf) => {
-                runFork(
-                  Effect.gen(function* () {
-                    const hub = yield* HubTag
-                    const engine = yield* hub.get(active.id)
-                    if (file.name.endsWith(".sql") || file.type.includes("sql")) {
-                      yield* engine.importSql(new TextDecoder().decode(buf))
-                    } else {
-                      yield* engine.importBinary(new Uint8Array(buf))
-                    }
-                    refreshCatalog(active.id)
-                    setMessage(`Imported ${file.name}`)
-                  }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
-                )
-              })
+          })
+        }}
+        onSettings={() => setSettingsOpen(true)}
+      />
+      <PanelGroup direction="horizontal" className="min-h-0 flex-1">
+        <Panel defaultSize={18} minSize={12} className="overflow-auto p-2">
+          <ConnectionList
+            connections={connections}
+            activeId={activeId}
+            newName={newName}
+            newEngine={newEngine}
+            config={config}
+            onNewName={setNewName}
+            onNewEngine={setNewEngine}
+            onCreate={createConnection}
+            onSelect={selectConnection}
+            onRename={renameConnection}
+            onDelete={deleteConnection}
+          />
+          <SchemaTree catalog={catalog} onOpenTable={openTable} />
+          <ScriptList
+            scripts={scripts}
+            onOpen={(s) => {
+              const id = crypto.randomUUID()
+              setTabs((list) => [...list, { id, kind: "sql", title: `${s.name}.sql`, sql: s.sql }])
+              setActiveTab(id)
             }}
           />
-        </label>
-        <button type="button" onClick={() => setSettingsOpen(true)}>
-          Settings
-        </button>
-      </header>
-      <PanelGroup direction="horizontal" className="body">
-        <Panel defaultSize={18} minSize={12} className="sidebar">
-          <section>
-            <h3>Connections</h3>
-            <div className="new-conn">
-              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="name" />
-              <select value={newEngine} onChange={(e) => setNewEngine(e.target.value as EngineType)}>
-                {config.engines.pglite.enabled ? <option value="pglite">PGlite</option> : null}
-                {config.engines.sqlite.enabled ? <option value="sqlite">SQLite</option> : null}
-              </select>
-              <button type="button" onClick={createConnection}>
-                New
-              </button>
-            </div>
-            <ul>
-              {connections.map((c) => (
-                <li key={c.id}>
-                  <button
-                    type="button"
-                    className={c.id === activeId ? "active" : ""}
-                    onClick={() => selectConnection(c)}
-                  >
-                    {c.name}
-                    <span className="muted">{c.engine}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-          <section>
-            <h3>Schema</h3>
-            {groupedTables.map(([schema, tables]) => (
-              <div key={schema} className="schema">
-                <div className="schema-name">{schema}</div>
-                {tables.map((table) => (
-                  <details key={`${table.schema}.${table.name}`}>
-                    <summary>
-                      <button type="button" className="link" onClick={() => openTable(table)}>
-                        {table.name}
-                      </button>
-                      <span className="muted">{table.kind}</span>
-                    </summary>
-                    <ul className="cols">
-                      {table.columns.map((col) => (
-                        <li key={col.name}>
-                          {col.name}
-                          <span className="muted">
-                            {col.type}
-                            {col.pk ? " pk" : ""}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                ))}
-              </div>
-            ))}
-          </section>
-          <section>
-            <h3>Scripts</h3>
-            <ul>
-              {scripts.map((s) => (
-                <li key={s.name}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const id = crypto.randomUUID()
-                      setTabs((list) => [...list, { id, kind: "sql", title: `${s.name}.sql`, sql: s.sql }])
-                      setActiveTab(id)
-                    }}
-                  >
-                    {s.name}.sql
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
         </Panel>
-        <PanelResizeHandle className="sep" />
+        <PanelResizeHandle className="w-1 bg-[var(--mui-palette-divider)]" />
         <Panel minSize={40}>
           <PanelGroup direction="vertical">
             <Panel minSize={30}>
-              <div className="tabs">
-                {tabs.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    className={t.id === activeTab ? "active" : ""}
-                    onClick={() => setActiveTab(t.id)}
-                  >
-                    {t.title}
-                    <span
-                      className="x"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setTabs((list) => list.filter((x) => x.id !== t.id))
-                        if (activeTab === t.id) setActiveTab(tabs.find((x) => x.id !== t.id)?.id ?? "")
-                      }}
-                    >
-                      ×
-                    </span>
-                  </button>
-                ))}
+              <div className="flex h-full flex-col">
+                <div className="flex items-center">
+                <Tabs
+                  value={activeTab || false}
+                  onChange={(_, id) => {
+                    if (id) setActiveTab(id)
+                  }}
+                  variant="scrollable"
+                  className="min-h-10 flex-1"
+                >
+                  {tabs.map((t) => (
+                    <Tab
+                      key={t.id}
+                      value={t.id}
+                      label={
+                        <span className="flex items-center gap-1">
+                          {t.title}
+                          <span
+                            className="cursor-pointer px-1"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setTabs((list) => list.filter((x) => x.id !== t.id))
+                              if (activeTab === t.id) setActiveTab(tabs.find((x) => x.id !== t.id)?.id ?? "")
+                            }}
+                          >
+                            ×
+                          </span>
+                        </span>
+                      }
+                    />
+                  ))}
+                </Tabs>
                 <button
                   type="button"
+                  className="px-2 text-lg"
                   onClick={() => {
                     const id = crypto.randomUUID()
                     setTabs((list) => [...list, { id, kind: "sql", title: `query${list.length + 1}.sql`, sql: "" }])
@@ -527,142 +530,160 @@ export const Workbench = () => {
                 >
                   +
                 </button>
-              </div>
-              <div className="editor">
-                {tab?.kind === "sql" ? (
-                  <SqlEditor
-                    value={tab.sql}
-                    dialect={dialect}
-                    theme={config.editor.theme}
-                    fontSize={config.editor.fontSize}
-                    tabSize={config.editor.tabSize}
-                    catalog={catalog}
-                    onChange={(sql) =>
-                      setTabs((list) => list.map((t) => (t.id === tab.id && t.kind === "sql" ? { ...t, sql } : t)))
-                    }
-                    onMount={(ed) => {
-                      editorRef.current = {
-                        getSelectionSql: () => {
-                          const sel = ed.getModel()?.getValueInRange(ed.getSelection()!)
-                          return sel
-                        },
-                        getValue: () => ed.getModel()?.getValue() ?? ""
+                </div>
+                <div className="min-h-0 flex-1">
+                  {tab?.kind === "sql" ? (
+                    <SqlEditor
+                      value={tab.sql}
+                      dialect={dialect}
+                      theme={config.editor.theme}
+                      fontSize={config.editor.fontSize}
+                      tabSize={config.editor.tabSize}
+                      catalog={catalog}
+                      onRun={runActive}
+                      onChange={(sql) =>
+                        setTabs((list) => list.map((t) => (t.id === tab.id && t.kind === "sql" ? { ...t, sql } : t)))
                       }
-                    }}
-                  />
-                ) : tab?.kind === "data" ? (
-                  <div className="table-data">
-                    <div className="grid-toolbar">
-                      <span>
-                        {tab.table.schema}.{tab.table.name}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setTabs((list) =>
-                            list.map((t) =>
-                              t.id === tab.id && t.kind === "data" ? { ...t, page: Math.max(0, t.page - 1) } : t
+                      onMount={(ed) => {
+                        editorRef.current = ed
+                      }}
+                    />
+                  ) : tab?.kind === "data" ? (
+                    <div className="flex h-full flex-col">
+                      <div className="flex items-center gap-2 p-2 text-sm">
+                        <span>
+                          {tab.table.schema}.{tab.table.name}
+                        </span>
+                        <button
+                          type="button"
+                          className="rounded border px-2 py-0.5"
+                          onClick={() =>
+                            setTabs((list) =>
+                              list.map((t) =>
+                                t.id === tab.id && t.kind === "data" ? { ...t, page: Math.max(0, t.page - 1) } : t
+                              )
                             )
-                          )
-                        }
-                      >
-                        Prev
-                      </button>
-                      <span>page {tab.page + 1}</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setTabs((list) =>
-                            list.map((t) => (t.id === tab.id && t.kind === "data" ? { ...t, page: t.page + 1 } : t))
-                          )
-                        }
-                      >
-                        Next
-                      </button>
+                          }
+                        >
+                          Prev
+                        </button>
+                        <span>page {tab.page + 1}</span>
+                        <button
+                          type="button"
+                          className="rounded border px-2 py-0.5"
+                          onClick={() =>
+                            setTabs((list) =>
+                              list.map((t) => (t.id === tab.id && t.kind === "data" ? { ...t, page: t.page + 1 } : t))
+                            )
+                          }
+                        >
+                          Next
+                        </button>
+                      </div>
+                      <div className="min-h-0 flex-1">
+                        <SqlResults
+                          pane="results"
+                          onPane={setBottom}
+                          statements={dataStatements}
+                          activeIndex={activeResult}
+                          onActiveIndex={setActiveResult}
+                          message={message}
+                          history={history}
+                          onOpenHistory={() => undefined}
+                          onExportCsv={() =>
+                            activeStatement &&
+                            downloadText(
+                              "result.csv",
+                              toCsv(activeStatement.columns as Array<string>, activeStatement.rows as Array<Array<unknown>>),
+                              "text/csv"
+                            )
+                          }
+                          onExportJson={() =>
+                            activeStatement &&
+                            downloadText(
+                              "result.json",
+                              JSON.stringify(
+                                (activeStatement.rows as Array<Array<unknown>>).map((row) =>
+                                  Object.fromEntries(activeStatement.columns.map((c, i) => [c, row[i]]))
+                                ),
+                                null,
+                                2
+                              ),
+                              "application/json"
+                            )
+                          }
+                          editTable={tab.table}
+                          onCellEdit={async (column, pkValue, value) => {
+                            if (!active) return
+                            const pk = tab.table.columns.find((c) => c.pk)
+                            if (!pk) return
+                            await runPromise(
+                              Effect.gen(function* () {
+                                const hub = yield* HubTag
+                                const engine = yield* hub.get(active.id)
+                                yield* engine.applyCellEdit({
+                                  schema: tab.table.schema,
+                                  table: tab.table.name,
+                                  pkColumn: pk.name,
+                                  pkValue,
+                                  column,
+                                  value
+                                })
+                                const sync = yield* SyncController
+                                if (config.sync.trigger === "onChange") {
+                                  yield* sync.notifyChange(
+                                    active.id,
+                                    config.sync.debounceMs,
+                                    config.sync.format,
+                                    active.engine
+                                  )
+                                }
+                                setSnack("Cell updated")
+                              })
+                            )
+                          }}
+                        />
+                      </div>
                     </div>
-                    <div className="grid-scroll">
-                      <table>
-                        <thead>
-                          <tr>
-                            {(result?.columns ?? []).map((c) => (
-                              <th key={c}>{c}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(result?.rows ?? []).map((row, i) => (
-                            <tr key={i}>
-                              {row.map((cell, j) => {
-                                const col = tab.table.columns[j]
-                                const pk = tab.table.columns.find((c) => c.pk)
-                                return (
-                                  <td key={j}>
-                                    <input
-                                      defaultValue={cell === null || cell === undefined ? "" : String(cell)}
-                                      onBlur={(e) => {
-                                        if (!active || !col || !pk) return
-                                        const pkIndex = tab.table.columns.findIndex((c) => c.pk)
-                                        const pkValue = row[pkIndex]
-                                        runFork(
-                                          Effect.gen(function* () {
-                                            const hub = yield* HubTag
-                                            const engine = yield* hub.get(active.id)
-                                            yield* engine.applyCellEdit({
-                                              schema: tab.table.schema,
-                                              table: tab.table.name,
-                                              pkColumn: pk.name,
-                                              pkValue,
-                                              column: col.name,
-                                              value: e.target.value
-                                            })
-                                            const sync = yield* SyncController
-                                            if (config.sync.trigger === "onChange") {
-                                              yield* sync.notifyChange(
-                                                active.id,
-                                                config.sync.debounceMs,
-                                                config.sync.format,
-                                                active.engine
-                                              )
-                                            }
-                                            setMessage("Cell updated")
-                                          }).pipe(Effect.catchAll((err) => Effect.sync(() => setMessage(String(err)))))
-                                        )
-                                      }}
-                                    />
-                                  </td>
-                                )
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="empty">Open a query tab</div>
-                )}
+                  ) : (
+                    <div className="p-6 text-sm opacity-70">Open a query tab</div>
+                  )}
+                </div>
               </div>
             </Panel>
-            <PanelResizeHandle className="sep" />
-            <Panel defaultSize={32} minSize={18} className="bottom">
-              <div className="tabs">
-                {(["results", "messages", "history"] as const).map((id) => (
-                  <button key={id} type="button" className={bottom === id ? "active" : ""} onClick={() => setBottom(id)}>
-                    {id}
-                  </button>
-                ))}
-              </div>
-              {bottom === "results" && result ? (
-                <ResultsGrid
-                  columns={result.columns}
-                  rows={result.rows as Array<Array<unknown>>}
-                  onExportCsv={() => downloadText("result.csv", toCsv(result.columns, result.rows as Array<Array<unknown>>), "text/csv")}
+            <PanelResizeHandle className="h-1 bg-[var(--mui-palette-divider)]" />
+            <Panel defaultSize={32} minSize={18}>
+              {tab?.kind === "data" ? (
+                <div className="p-2 text-sm opacity-70">{message}</div>
+              ) : (
+                <SqlResults
+                  pane={bottom}
+                  onPane={setBottom}
+                  statements={statements}
+                  activeIndex={activeResult}
+                  onActiveIndex={setActiveResult}
+                  message={message}
+                  history={history}
+                  onOpenHistory={(sql) => {
+                    const id = crypto.randomUUID()
+                    setTabs((list) => [...list, { id, kind: "sql", title: "history.sql", sql }])
+                    setActiveTab(id)
+                  }}
+                  onExportCsv={() =>
+                    activeStatement &&
+                    downloadText(
+                      "result.csv",
+                      toCsv(activeStatement.columns as Array<string>, activeStatement.rows as Array<Array<unknown>>),
+                      "text/csv"
+                    )
+                  }
                   onExportJson={() =>
+                    activeStatement &&
                     downloadText(
                       "result.json",
                       JSON.stringify(
-                        (result.rows as Array<Array<unknown>>).map((row) =>
-                          Object.fromEntries(result.columns.map((c, i) => [c, row[i]]))
+                        (activeStatement.rows as Array<Array<unknown>>).map((row) =>
+                          Object.fromEntries(activeStatement.columns.map((c, i) => [c, row[i]]))
                         ),
                         null,
                         2
@@ -671,58 +692,58 @@ export const Workbench = () => {
                     )
                   }
                 />
-              ) : bottom === "history" ? (
-                <ul className="history">
-                  {history.map((h) => (
-                    <li key={h.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const id = crypto.randomUUID()
-                          setTabs((list) => [...list, { id, kind: "sql", title: "history.sql", sql: h.sql }])
-                          setActiveTab(id)
-                        }}
-                      >
-                        <span className={h.ok ? "ok" : "err"}>{h.ok ? "OK" : "ERR"}</span>
-                        {h.sql.slice(0, 80)}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <pre className="messages">{message}</pre>
               )}
             </Panel>
           </PanelGroup>
         </Panel>
       </PanelGroup>
-      {settingsOpen ? (
-        <SettingsPanel
-          config={config}
-          onChange={setConfig}
-          onClose={() => setSettingsOpen(false)}
-          onSave={() => {
-            void withClient((client) => client.config.put({ payload: config })).then((saved) => {
-              setConfig(saved)
-              setMessage("Config saved")
-              if (active && saved.sync.trigger === "interval") {
-                runFork(
-                  Effect.gen(function* () {
-                    const sync = yield* SyncController
-                    yield* sync.startInterval(
-                      active.id,
-                      saved.sync.intervalSeconds,
-                      saved.sync.format,
-                      active.engine
-                    )
-                  })
-                )
-              }
-            })
-          }}
-        />
-      ) : null}
-      <footer className="status">{running ? "Running…" : message}</footer>
+      <div className="border-t px-3 py-1 text-xs opacity-80">{running ? "Running…" : message}</div>
+      <SettingsDrawer
+        open={settingsOpen}
+        config={config}
+        onChange={setConfig}
+        onClose={() => setSettingsOpen(false)}
+        onSave={() => {
+          void withClient((client) => client.config.put({ payload: config })).then((saved) => {
+            setConfig(saved)
+            setSnack("Config saved")
+            if (active && saved.sync.trigger === "interval") {
+              runFork(
+                Effect.gen(function* () {
+                  const sync = yield* SyncController
+                  yield* sync.startInterval(active.id, saved.sync.intervalSeconds, saved.sync.format, active.engine)
+                })
+              )
+            }
+          })
+        }}
+      />
+      <SnippetPalette
+        open={snippetsOpen}
+        items={snippetItems}
+        onClose={() => setSnippetsOpen(false)}
+        onInsert={(sql) => {
+          const ed = editorRef.current
+          if (ed && tab?.kind === "sql") {
+            const sel = ed.getSelection()
+            if (sel) ed.executeEdits("snippet", [{ range: sel, text: sql }])
+            else ed.setValue((ed.getValue() || "") + sql)
+          }
+          setSnippetsOpen(false)
+        }}
+      />
+      <ParamsDialog
+        open={Boolean(pendingSql)}
+        names={paramNames}
+        onCancel={() => setPendingSql(undefined)}
+        onRun={(values) => {
+          const sql = pendingSql
+          setPendingSql(undefined)
+          if (sql) executeSql(sql, values)
+        }}
+      />
+      <Snackbar open={Boolean(snack)} autoHideDuration={2500} onClose={() => setSnack(undefined)} message={snack} />
     </div>
+    </ThemeProvider>
   )
 }

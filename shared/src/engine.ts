@@ -1,7 +1,9 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect } from "effect"
 import { ConnectionNotFound, DumpError, SqlExecError } from "./errors.ts"
-import type { Catalog, QueryResult } from "./schema/models.ts"
+import type { Catalog, QueryResult, ScriptResult } from "./schema/models.ts"
 import type { EngineType } from "./schema/config.ts"
+
+export type QueryParams = ReadonlyArray<unknown> | Readonly<Record<string, unknown>>
 
 export interface CellEdit {
   readonly schema: string
@@ -15,8 +17,7 @@ export interface CellEdit {
 export interface EngineApi {
   readonly dialect: "pgsql" | "sqlite"
   readonly engine: EngineType
-  readonly query: (sql: string) => Effect.Effect<QueryResult, SqlExecError>
-  readonly exec: (sql: string) => Effect.Effect<QueryResult, SqlExecError>
+  readonly query: (sql: string, params?: QueryParams) => Effect.Effect<ScriptResult, SqlExecError>
   readonly introspect: Effect.Effect<Catalog, SqlExecError>
   readonly exportBinary: Effect.Effect<Uint8Array, DumpError>
   readonly importBinary: (bytes: Uint8Array) => Effect.Effect<void, DumpError>
@@ -26,11 +27,11 @@ export interface EngineApi {
   readonly close: Effect.Effect<void>
 }
 
-export class DbEngine extends Context.Tag("app/DbEngine")<DbEngine, EngineApi>() {}
+export type TestEngine = EngineApi & { readonly wasInterrupted: () => boolean }
 
 export const makeTestEngine = (options?: {
   readonly hangQuery?: boolean
-}): EngineApi => {
+}): TestEngine => {
   let interrupted = false
   const tables = new Map<string, { columns: Array<string>; rows: Array<Array<unknown>> }>()
   tables.set("public.items", {
@@ -38,7 +39,7 @@ export const makeTestEngine = (options?: {
     rows: [[1, "alpha"]]
   })
 
-  const query = (sql: string): Effect.Effect<QueryResult, SqlExecError> => {
+  const query = (sql: string, _params?: QueryParams): Effect.Effect<ScriptResult, SqlExecError> => {
     if (options?.hangQuery) {
       return Effect.never.pipe(
         Effect.onInterrupt(() =>
@@ -49,23 +50,25 @@ export const makeTestEngine = (options?: {
       )
     }
     const trimmed = sql.trim().toLowerCase()
-    if (trimmed.startsWith("select")) {
-      const table = tables.get("public.items")
-      return Effect.succeed({
-        columns: table?.columns ?? [],
-        rows: table?.rows ?? [],
-        rowCount: table?.rows.length ?? 0,
-        durationMs: 1
-      })
-    }
-    return Effect.succeed({ columns: [], rows: [], rowCount: 0, durationMs: 1 })
+    const table = tables.get("public.items")
+    const result: QueryResult = trimmed.startsWith("select")
+      ? {
+          columns: table?.columns ?? [],
+          rows: table?.rows ?? [],
+          rowCount: table?.rows.length ?? 0,
+          durationMs: 1
+        }
+      : { columns: [], rows: [], rowCount: 0, durationMs: 1 }
+    return Effect.succeed({
+      statements: [{ ...result, sql }],
+      durationMs: 1
+    })
   }
 
   return {
     dialect: "pgsql",
     engine: "pglite",
     query,
-    exec: query,
     introspect: Effect.succeed({
       schemas: ["public"],
       tables: [
@@ -87,10 +90,8 @@ export const makeTestEngine = (options?: {
     applyCellEdit: () => Effect.void,
     close: Effect.void,
     wasInterrupted: () => interrupted
-  } as EngineApi & { wasInterrupted: () => boolean }
+  }
 }
-
-export const DbEngineTest = Layer.succeed(DbEngine, makeTestEngine())
 
 export class ConnectionHub extends Context.Tag("app/ConnectionHub")<
   ConnectionHub,

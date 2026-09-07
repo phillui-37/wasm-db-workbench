@@ -1,6 +1,6 @@
 import { FileSystem, Path } from "@effect/platform"
 import { ConfigIoError, ConfigParseError, type AppConfig, AppConfig as AppConfigSchema } from "@workbench/shared"
-import { Config, Context, Effect, Layer, Option, Schema } from "effect"
+import { Config, Context, Effect, Layer, Option, Ref, Schema } from "effect"
 import { isAbsolute, resolve } from "node:path"
 import { parse, stringify } from "yaml"
 import { repoRoot } from "./root.ts"
@@ -32,8 +32,9 @@ export const makeConfigService = Effect.gen(function* () {
   )
   const dataDir = yield* Config.option(Config.string("DATA_DIR"))
   const scriptsDir = yield* Config.option(Config.string("SCRIPTS_DIR"))
+  const cache = yield* Ref.make<AppConfig | undefined>(undefined)
 
-  const get = Effect.gen(function* () {
+  const loadFromDisk = Effect.gen(function* () {
     const raw = yield* fs.readFileString(configPath).pipe(
       Effect.mapError((e) => new ConfigIoError({ message: e.message }))
     )
@@ -41,6 +42,14 @@ export const makeConfigService = Effect.gen(function* () {
       Effect.mapError((e) => new ConfigParseError({ message: String(e) }))
     )
     return overlayEnv(decoded, dataDir, scriptsDir)
+  })
+
+  const get = Effect.gen(function* () {
+    const hit = yield* Ref.get(cache)
+    if (hit) return hit
+    const loaded = yield* loadFromDisk
+    yield* Ref.set(cache, loaded)
+    return loaded
   })
 
   const set = (cfg: AppConfig) =>
@@ -54,7 +63,9 @@ export const makeConfigService = Effect.gen(function* () {
       yield* fs.writeFileString(configPath, stringify(encoded)).pipe(
         Effect.mapError((e) => new ConfigIoError({ message: e.message }))
       )
-      return overlayEnv(cfg, dataDir, scriptsDir)
+      const next = overlayEnv(cfg, dataDir, scriptsDir)
+      yield* Ref.set(cache, next)
+      return next
     })
 
   return ConfigService.of({ get, set })

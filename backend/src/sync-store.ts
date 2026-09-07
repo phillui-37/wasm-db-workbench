@@ -65,7 +65,7 @@ export const makeSyncStore = Effect.gen(function* () {
         yield* writeBinary(path.join(dir, binaryName(body.engine)), body.binaryBase64)
       }
       yield* fs
-        .writeFileString(path.join(dir, "meta.json"), JSON.stringify({ engine: body.engine, updatedAt: Date.now() }, null, 2))
+        .writeFileString(path.join(dir, "meta.json"), JSON.stringify({ engine: body.engine, updatedAt: Date.now() }))
         .pipe(Effect.mapError(io))
       return {
         connectionId,
@@ -92,27 +92,35 @@ export const makeSyncStore = Effect.gen(function* () {
 
   const pull = (connectionId: string) =>
     Effect.gen(function* () {
-      const dir = yield* dirFor(connectionId)
-      const metaPath = path.join(dir, "meta.json")
-      const hasMeta = yield* fs.exists(metaPath).pipe(Effect.mapError(io))
+      const cfg = yield* config.get
+      yield* assertSafeSegment(connectionId)
+      const dir = yield* joinSafe(path, cfg.storage.dataDir, connectionId)
+      const metaRaw = yield* fs.readFileString(path.join(dir, "meta.json")).pipe(Effect.orElseSucceed(() => undefined))
       const sqlDump = yield* readOptionalString(path.join(dir, "dump.sql"))
-      const sqliteBin = yield* readOptionalBase64(path.join(dir, "db.sqlite"))
-      const pgBin = yield* readOptionalBase64(path.join(dir, "pgdata.tar.gz"))
-      const binaryBase64 = sqliteBin ?? pgBin
-      if (!hasMeta && sqlDump === undefined && binaryBase64 === undefined) {
+      let engine: SyncPush["engine"] | undefined
+      if (metaRaw) {
+        try {
+          engine = (JSON.parse(metaRaw) as { engine: SyncPush["engine"] }).engine
+        } catch {
+          engine = undefined
+        }
+      }
+      if (!engine) {
+        const hasSqlite = yield* fs.exists(path.join(dir, "db.sqlite")).pipe(Effect.orElseSucceed(() => false))
+        engine = hasSqlite ? "sqlite" : "pglite"
+      }
+      const binaryBase64 = yield* readOptionalBase64(path.join(dir, binaryName(engine)))
+      if (!metaRaw && sqlDump === undefined && binaryBase64 === undefined) {
         return yield* Effect.fail(new SyncNotFound({ connectionId }))
       }
-      const engine = hasMeta
-        ? ((JSON.parse(yield* fs.readFileString(metaPath).pipe(Effect.mapError(io))) as { engine: SyncPush["engine"] }).engine)
-        : sqliteBin
-          ? "sqlite"
-          : "pglite"
       return { connectionId, engine, sqlDump, binaryBase64 } satisfies SyncPayload
     })
 
   const files = (connectionId: string) =>
     Effect.gen(function* () {
-      const dir = yield* dirFor(connectionId)
+      const cfg = yield* config.get
+      yield* assertSafeSegment(connectionId)
+      const dir = yield* joinSafe(path, cfg.storage.dataDir, connectionId)
       const names = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as Array<string>))
       const out: Array<HostFile> = []
       for (const name of names) {

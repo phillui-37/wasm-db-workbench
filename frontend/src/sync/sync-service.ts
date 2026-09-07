@@ -1,14 +1,13 @@
-import { FetchHttpClient, HttpApiClient } from "@effect/platform"
 import {
   ConnectionHub,
   SyncError,
-  WorkbenchApi,
   debouncedSync,
   intervalSync,
   type EngineType,
   type SyncFormat
 } from "@workbench/shared"
 import { Context, Effect, Fiber, HashMap, Layer, Option, Ref } from "effect"
+import { WorkbenchClient } from "../api/workbench-client.ts"
 import { base64ToBytes, bytesToBase64 } from "../engines/dump.ts"
 
 export class SyncController extends Context.Tag("app/SyncController")<
@@ -36,7 +35,7 @@ export const SyncControllerLive = Layer.effect(
   SyncController,
   Effect.gen(function* () {
     const hub = yield* ConnectionHub
-    const client = yield* HttpApiClient.make(WorkbenchApi, { baseUrl: "" })
+    const client = yield* WorkbenchClient
     const intervalFibers = yield* Ref.make(HashMap.empty<string, Fiber.RuntimeFiber<unknown, unknown>>())
     const debounceFibers = yield* Ref.make(HashMap.empty<string, Fiber.RuntimeFiber<unknown, unknown>>())
 
@@ -62,10 +61,12 @@ export const SyncControllerLive = Layer.effect(
           format === "binary" || format === "both"
             ? bytesToBase64(yield* db.exportBinary.pipe(Effect.mapError((e) => new SyncError({ message: e.message }))))
             : undefined
-        yield* client.sync.push({
-          path: { connectionId: id },
-          payload: { engine, format, sqlDump, binaryBase64 }
-        }).pipe(Effect.mapError((e) => new SyncError({ message: String(e) })))
+        yield* client.sync
+          .push({
+            path: { connectionId: id },
+            payload: { engine, format, sqlDump, binaryBase64 }
+          })
+          .pipe(Effect.mapError((e) => new SyncError({ message: String(e) })))
       })
 
     const pull = (id: string) =>
@@ -93,8 +94,9 @@ export const SyncControllerLive = Layer.effect(
     const notifyChange = (id: string, debounceMs: number, format: SyncFormat, engine: EngineType) =>
       Effect.gen(function* () {
         yield* stopMap(debounceFibers, id)
+        const autoFormat: SyncFormat = format === "sql" ? "binary" : format === "both" ? "binary" : format
         const fiber = yield* Effect.fork(
-          debouncedSync(push(id, format, engine).pipe(Effect.ignore), debounceMs)
+          debouncedSync(push(id, autoFormat, engine).pipe(Effect.ignore), debounceMs)
         )
         yield* Ref.update(debounceFibers, HashMap.set(id, fiber))
       })
@@ -107,4 +109,4 @@ export const SyncControllerLive = Layer.effect(
 
     return SyncController.of({ push, pull, startInterval, stop, notifyChange })
   })
-).pipe(Layer.provide(FetchHttpClient.layer))
+)

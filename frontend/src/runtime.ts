@@ -1,11 +1,11 @@
 import { FetchHttpClient } from "@effect/platform"
 import { ConnectionHub } from "@workbench/shared"
-import { Atom } from "@effect-atom/atom-react"
 import { Effect, Layer, ManagedRuntime } from "effect"
+import { WorkbenchClient, WorkbenchClientLive } from "./api/workbench-client.ts"
 import { ConnectionHubLive } from "./engines/hub.ts"
 import { SyncController, SyncControllerLive } from "./sync/sync-service.ts"
 
-const ServicesLive = Layer.mergeAll(ConnectionHubLive, FetchHttpClient.layer)
+const ServicesLive = Layer.mergeAll(ConnectionHubLive, FetchHttpClient.layer, WorkbenchClientLive)
 
 export const WorkbenchLive = Layer.mergeAll(
   ServicesLive,
@@ -13,9 +13,11 @@ export const WorkbenchLive = Layer.mergeAll(
 )
 
 export const workbenchRuntime = ManagedRuntime.make(WorkbenchLive)
-export const atomRuntime = Atom.runtime(WorkbenchLive)
 
-export { ConnectionHub, SyncController }
+export { ConnectionHub, SyncController, WorkbenchClient }
 
-export const runFork = <A, E, R = ConnectionHub | SyncController>(effect: Effect.Effect<A, E, R>) =>
+export const runFork = <A, E, R = never>(effect: Effect.Effect<A, E, R>) =>
   workbenchRuntime.runFork(effect as Effect.Effect<A, E>)
+
+export const runPromise = <A, E, R = never>(effect: Effect.Effect<A, E, R>) =>
+  workbenchRuntime.runPromise(effect as Effect.Effect<A, E>)

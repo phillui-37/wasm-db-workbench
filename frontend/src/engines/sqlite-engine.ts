@@ -1,7 +1,7 @@
-import sqlite3InitModule from "@sqlite.org/sqlite-wasm"
 import {
   DumpError,
-  isWriteSql,
+  analyzeSql,
+  lastResult,
   qualifyTable,
   quoteIdent,
   quoteLiteral,
@@ -10,71 +10,82 @@ import {
   type Catalog,
   type CellEdit,
   type EngineApi,
-  type QueryResult
+  type QueryParams,
+  type QueryResult,
+  type ScriptResult
 } from "@workbench/shared"
 import { Effect } from "effect"
 import { dumpSqlFromEngine } from "./dump.ts"
 
-type Sqlite3 = Awaited<ReturnType<typeof sqlite3InitModule>>
+type Sqlite3Module = typeof import("@sqlite.org/sqlite-wasm")
+type Sqlite3InitModule = Sqlite3Module["default"]
+type Sqlite3 = Awaited<ReturnType<Sqlite3InitModule>>
 type SqliteDb = InstanceType<Sqlite3["oo1"]["DB"]>
 
 let loader: Promise<Sqlite3> | undefined
+let idbDb: Promise<IDBDatabase> | undefined
 
 const loadSqlite = () => {
-  loader ??= sqlite3InitModule({
-    print: () => undefined,
-    printErr: () => undefined
-  })
+  loader ??= import("@sqlite.org/sqlite-wasm").then((mod) =>
+    mod.default({
+      print: () => undefined,
+      printErr: () => undefined
+    })
+  )
   return loader
+}
+
+const openIdb = () => {
+  idbDb ??= new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open("workbench-sqlite", 1)
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore("kv")
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+  return idbDb
 }
 
 const idbGet = (key: string) =>
   Effect.tryPromise({
-    try: () =>
-      new Promise<Uint8Array | undefined>((resolve, reject) => {
-        const req = indexedDB.open("workbench-sqlite", 1)
-        req.onupgradeneeded = () => {
-          req.result.createObjectStore("kv")
+    try: async () => {
+      const db = await openIdb()
+      return await new Promise<Uint8Array | undefined>((resolve, reject) => {
+        const tx = db.transaction("kv", "readonly")
+        const get = tx.objectStore("kv").get(key)
+        get.onsuccess = () => {
+          const value = get.result
+          resolve(value instanceof Uint8Array ? value : undefined)
         }
-        req.onsuccess = () => {
-          const tx = req.result.transaction("kv", "readonly")
-          const get = tx.objectStore("kv").get(key)
-          get.onsuccess = () => {
-            const value = get.result
-            resolve(value instanceof Uint8Array ? value : undefined)
-          }
-          get.onerror = () => reject(get.error)
-        }
-        req.onerror = () => reject(req.error)
-      }),
+        get.onerror = () => reject(get.error)
+      })
+    },
     catch: (e) => new SqlExecError({ message: String(e) })
   })
 
 const idbPut = (key: string, value: Uint8Array) =>
   Effect.tryPromise({
-    try: () =>
-      new Promise<void>((resolve, reject) => {
-        const req = indexedDB.open("workbench-sqlite", 1)
-        req.onupgradeneeded = () => {
-          req.result.createObjectStore("kv")
-        }
-        req.onsuccess = () => {
-          const tx = req.result.transaction("kv", "readwrite")
-          tx.objectStore("kv").put(value.slice(), key)
-          tx.oncomplete = () => resolve()
-          tx.onerror = () => reject(tx.error)
-        }
-        req.onerror = () => reject(req.error)
-      }),
+    try: async () => {
+      const db = await openIdb()
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("kv", "readwrite")
+        tx.objectStore("kv").put(value.slice(), key)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
     catch: (e) => new SqlExecError({ message: String(e) })
   })
 
-const execQuery = (db: SqliteDb, sql: string): QueryResult => {
+const execQuery = (db: SqliteDb, sql: string, params?: QueryParams): QueryResult => {
   const started = Date.now()
   const resultRows: Array<Array<string | number | bigint | Uint8Array | Int8Array | ArrayBuffer | null>> = []
   const columnNames: Array<string> = []
+  const bind = params === undefined ? undefined : Array.isArray(params) ? [...params] : { ...params }
   db.exec({
     sql,
+    bind: bind as never,
     rowMode: "array",
     resultRows,
     columnNames
@@ -87,10 +98,7 @@ const execQuery = (db: SqliteDb, sql: string): QueryResult => {
   }
 }
 
-const copyExport = (sqlite3: Sqlite3, db: SqliteDb): Uint8Array => {
-  const exported = sqlite3.capi.sqlite3_js_db_export(db)
-  return exported.slice()
-}
+const copyExport = (sqlite3: Sqlite3, db: SqliteDb): Uint8Array => sqlite3.capi.sqlite3_js_db_export(db).slice()
 
 const deserializeInto = (sqlite3: Sqlite3, db: SqliteDb, bytes: Uint8Array) => {
   const copy = bytes.byteLength > 0 ? bytes : new Uint8Array(1)
@@ -108,6 +116,8 @@ const deserializeInto = (sqlite3: Sqlite3, db: SqliteDb, bytes: Uint8Array) => {
   }
 }
 
+const PERSIST_DEBOUNCE_MS = 400
+
 export const makeSqliteEngine = (connectionId: string): Effect.Effect<EngineApi, SqlExecError> =>
   Effect.gen(function* () {
     const sqlite3 = yield* Effect.tryPromise({
@@ -123,8 +133,12 @@ export const makeSqliteEngine = (connectionId: string): Effect.Effect<EngineApi,
       }).pipe(Effect.ignore)
     }
 
-    const persist = () =>
+    let persistTimer: ReturnType<typeof setTimeout> | undefined
+    let closed = false
+
+    const persistNow = () =>
       Effect.gen(function* () {
+        if (closed) return
         const bytes = yield* Effect.try({
           try: () => copyExport(sqlite3, db),
           catch: (e) => new SqlExecError({ message: String(e) })
@@ -132,36 +146,76 @@ export const makeSqliteEngine = (connectionId: string): Effect.Effect<EngineApi,
         if (bytes.byteLength > 0) yield* idbPut(connectionId, bytes).pipe(Effect.ignore)
       })
 
-    const queryOne = (sql: string) =>
+    const schedulePersist = () => {
+      if (persistTimer) clearTimeout(persistTimer)
+      persistTimer = setTimeout(() => {
+        persistTimer = undefined
+        void Effect.runPromise(persistNow().pipe(Effect.ignore))
+      }, PERSIST_DEBOUNCE_MS)
+    }
+
+    const flushPersist = () =>
+      Effect.sync(() => {
+        if (persistTimer) {
+          clearTimeout(persistTimer)
+          persistTimer = undefined
+        }
+      }).pipe(Effect.zipRight(persistNow()))
+
+    const queryOne = (sql: string, params?: QueryParams) =>
       Effect.try({
-        try: () => execQuery(db, sql),
+        try: () => execQuery(db, sql, params),
         catch: (e) => new SqlExecError({ message: String(e) })
       })
 
-    const query = (sql: string) =>
-      runStatements(sql, queryOne).pipe(
-        Effect.tap(() => (isWriteSql(sql) ? persist().pipe(Effect.ignore) : Effect.void))
+    const query = (sql: string, params?: QueryParams): Effect.Effect<ScriptResult, SqlExecError> => {
+      const analysis = analyzeSql(sql)
+      const run = params
+        ? queryOne(sql, params).pipe(
+            Effect.map((result) => ({ statements: [{ ...result, sql }], durationMs: result.durationMs }))
+          )
+        : runStatements(sql, (stmt) => queryOne(stmt), analysis.statements)
+      return run.pipe(
+        Effect.tap(() =>
+          analysis.isWrite
+            ? Effect.sync(() => {
+                schedulePersist()
+              })
+            : Effect.void
+        )
       )
+    }
 
     const introspect = Effect.gen(function* () {
       const master = yield* query(
         "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name"
       )
       const tables: Array<Catalog["tables"][number]> = []
-      for (const row of master.rows) {
+      for (const row of lastResult(master).rows) {
         const name = String(row[0])
         const kind = String(row[1]).includes("view") ? ("view" as const) : ("table" as const)
         const info = yield* query(`PRAGMA table_info(${quoteIdent("sqlite", name)})`)
+        const fkInfo = yield* query(`PRAGMA foreign_key_list(${quoteIdent("sqlite", name)})`)
+        const fks = new Map<string, { table: string; column: string }>()
+        for (const fk of lastResult(fkInfo).rows) {
+          fks.set(String(fk[3]), { table: String(fk[2]), column: String(fk[4]) })
+        }
         tables.push({
           schema: "main",
           name,
           kind,
-          columns: info.rows.map((c) => ({
-            name: String(c[1]),
-            type: String(c[2] ?? "TEXT"),
-            nullable: Number(c[3]) === 0,
-            pk: Number(c[5]) > 0
-          }))
+          columns: lastResult(info).rows.map((c) => {
+            const colName = String(c[1])
+            const fk = fks.get(colName)
+            return {
+              name: colName,
+              type: String(c[2] ?? "TEXT"),
+              nullable: Number(c[3]) === 0,
+              pk: Number(c[5]) > 0,
+              fkTable: fk?.table,
+              fkColumn: fk?.column
+            }
+          })
         })
       }
       return { schemas: ["main"], tables } satisfies Catalog
@@ -171,24 +225,34 @@ export const makeSqliteEngine = (connectionId: string): Effect.Effect<EngineApi,
       dialect: "sqlite",
       engine: "sqlite",
       query,
-      exec: query,
       introspect,
-      exportBinary: Effect.try({
-        try: () => copyExport(sqlite3, db),
-        catch: (e) => new DumpError({ message: String(e) })
-      }),
+      exportBinary: flushPersist().pipe(
+        Effect.mapError((e) => new DumpError({ message: e.message })),
+        Effect.zipRight(
+          Effect.try({
+            try: () => copyExport(sqlite3, db),
+            catch: (e) => new DumpError({ message: String(e) })
+          })
+        )
+      ),
       importBinary: (bytes) =>
         Effect.try({
           try: () => deserializeInto(sqlite3, db, bytes),
           catch: (e) => new DumpError({ message: String(e) })
-        }).pipe(Effect.tap(() => persist().pipe(Effect.mapError((e) => new DumpError({ message: e.message }))))),
+        }).pipe(
+          Effect.tap(() => flushPersist().pipe(Effect.mapError((e) => new DumpError({ message: e.message }))))
+        ),
       exportSql: Effect.suspend(() => dumpSqlFromEngine(engine)),
       importSql: (sql) => query(sql).pipe(Effect.asVoid),
       applyCellEdit: (edit: CellEdit) =>
         query(
           `UPDATE ${qualifyTable("sqlite", edit.schema, edit.table)} SET ${quoteIdent("sqlite", edit.column)} = ${quoteLiteral(edit.value)} WHERE ${quoteIdent("sqlite", edit.pkColumn)} = ${quoteLiteral(edit.pkValue)}`
         ).pipe(Effect.asVoid),
-      close: Effect.sync(() => db.close())
+      close: Effect.gen(function* () {
+        yield* flushPersist().pipe(Effect.ignore)
+        closed = true
+        db.close()
+      })
     }
     return engine
   })

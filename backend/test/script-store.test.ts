@@ -32,10 +32,14 @@ describe("ScriptStore", () => {
       Effect.gen(function* () {
         const scripts = yield* ScriptStore
         yield* scripts.put("demo", "init", "SELECT 1")
+        yield* scripts.put("demo", "fav", "SELECT 2", true)
         const listed = yield* scripts.list("demo")
-        expect(listed).toHaveLength(1)
-        expect(listed[0]?.sql).toBe("SELECT 1")
+        expect(listed[0]?.name).toBe("fav")
+        expect(listed[0]?.pinned).toBe(true)
+        expect(listed).toHaveLength(2)
+        expect(listed[1]?.sql).toBe("SELECT 1")
         yield* scripts.remove("demo", "init")
+        yield* scripts.remove("demo", "fav")
         expect(yield* scripts.list("demo")).toHaveLength(0)
       })
     )

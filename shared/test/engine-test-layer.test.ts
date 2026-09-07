@@ -1,22 +1,21 @@
 import { describe, expect, it } from "@effect/vitest"
-import { DbEngine, makeTestEngine } from "@workbench/shared"
-import { Effect, Fiber, Layer } from "effect"
+import { makeTestEngine } from "@workbench/shared"
+import { Effect, Fiber } from "effect"
 
-describe("DbEngine test layer", () => {
+describe("test engine", () => {
   it.effect("query returns catalog rows", () =>
     Effect.gen(function* () {
-      const engine = yield* DbEngine
+      const engine = makeTestEngine()
       const result = yield* engine.query("SELECT * FROM items")
-      expect(result.rowCount).toBe(1)
-      expect(result.columns).toContain("id")
-    }).pipe(Effect.provide(Layer.succeed(DbEngine, makeTestEngine())))
+      const last = result.statements[0]
+      expect(last?.rowCount).toBe(1)
+      expect(last?.columns).toContain("id")
+    })
   )
 
   it.live("interrupting a hanging query runs onInterrupt", () =>
     Effect.gen(function* () {
-      const engine = makeTestEngine({ hangQuery: true }) as ReturnType<typeof makeTestEngine> & {
-        wasInterrupted: () => boolean
-      }
+      const engine = makeTestEngine({ hangQuery: true })
       const fiber = yield* Effect.fork(engine.query("SELECT 1"))
       yield* Effect.yieldNow()
       yield* Fiber.interrupt(fiber)

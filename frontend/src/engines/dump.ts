@@ -1,4 +1,4 @@
-import { DumpError, qualifyTable, quoteIdent, quoteLiteral, type EngineApi } from "@workbench/shared"
+import { DumpError, lastResult, qualifyTable, quoteIdent, quoteLiteral, type EngineApi } from "@workbench/shared"
 import { Effect } from "effect"
 
 export const bytesToBase64 = (bytes: Uint8Array): string => {
@@ -17,7 +17,9 @@ export const base64ToBytes = (value: string): Uint8Array => {
   return bytes
 }
 
-export const dumpSqlFromEngine = (engine: EngineApi) =>
+export const DUMP_SQL_MAX_ROWS = 50_000
+
+export const dumpSqlFromEngine = (engine: EngineApi, maxRows = DUMP_SQL_MAX_ROWS) =>
   Effect.gen(function* () {
     const catalog = yield* engine.introspect.pipe(
       Effect.mapError((e) => new DumpError({ message: e.message }))
@@ -35,13 +37,18 @@ export const dumpSqlFromEngine = (engine: EngineApi) =>
       const pk = pks.length > 0 ? `, PRIMARY KEY (${pks.join(", ")})` : ""
       const qtable = qualifyTable(engine.dialect, table.schema, table.name)
       parts.push(`CREATE TABLE IF NOT EXISTS ${qtable} (${colDefs}${pk});`)
-      const data = yield* engine.query(`SELECT * FROM ${qtable}`).pipe(
-        Effect.mapError((e) => new DumpError({ message: e.message }))
+      const data = lastResult(
+        yield* engine
+          .query(`SELECT * FROM ${qtable} LIMIT ${maxRows}`)
+          .pipe(Effect.mapError((e) => new DumpError({ message: e.message })))
       )
       for (const row of data.rows) {
         const cols = data.columns.map((c) => quoteIdent(engine.dialect, c)).join(", ")
         const values = row.map((v) => quoteLiteral(v)).join(", ")
         parts.push(`INSERT INTO ${qtable} (${cols}) VALUES (${values});`)
+      }
+      if (data.rowCount >= maxRows) {
+        parts.push(`-- truncated ${qtable} at ${maxRows} rows; use binary export for full dump`)
       }
     }
     return parts.join("\n")
@@ -58,7 +65,7 @@ export const downloadText = (filename: string, contents: string, type = "text/pl
 }
 
 export const downloadBytes = (filename: string, bytes: Uint8Array) => {
-  const blob = new Blob([bytes], { type: "application/octet-stream" })
+  const blob = new Blob([bytes.buffer as ArrayBuffer], { type: "application/octet-stream" })
   const url = URL.createObjectURL(blob)
   const a = document.createElement("a")
   a.href = url

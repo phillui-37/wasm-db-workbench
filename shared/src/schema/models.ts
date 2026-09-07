@@ -10,12 +10,14 @@ export const Script = Schema.Struct({
   connectionId: Schema.String,
   name: Schema.String,
   sql: Schema.String,
-  updatedAt: Schema.Number
+  updatedAt: Schema.Number,
+  pinned: Schema.optional(Schema.Boolean)
 })
 export type Script = Schema.Schema.Type<typeof Script>
 
 export const ScriptWrite = Schema.Struct({
-  sql: Schema.String
+  sql: Schema.String,
+  pinned: Schema.optional(Schema.Boolean)
 })
 export type ScriptWrite = Schema.Schema.Type<typeof ScriptWrite>
 
@@ -76,7 +78,9 @@ export const Column = Schema.Struct({
   name: Schema.String,
   type: Schema.String,
   nullable: Schema.Boolean,
-  pk: Schema.Boolean
+  pk: Schema.Boolean,
+  fkTable: Schema.optional(Schema.String),
+  fkColumn: Schema.optional(Schema.String)
 })
 export type Column = Schema.Schema.Type<typeof Column>
 
@@ -101,6 +105,21 @@ export const QueryResult = Schema.Struct({
   durationMs: Schema.Number
 })
 export type QueryResult = Schema.Schema.Type<typeof QueryResult>
+
+export const StatementResult = Schema.Struct({
+  columns: Schema.Array(Schema.String),
+  rows: Schema.Array(Schema.Array(Schema.Unknown)),
+  rowCount: Schema.Number,
+  durationMs: Schema.Number,
+  sql: Schema.String
+})
+export type StatementResult = Schema.Schema.Type<typeof StatementResult>
+
+export const ScriptResult = Schema.Struct({
+  statements: Schema.Array(StatementResult),
+  durationMs: Schema.Number
+})
+export type ScriptResult = Schema.Schema.Type<typeof ScriptResult>
 
 export const ConnectionMeta = Schema.Struct({
   id: Schema.String,

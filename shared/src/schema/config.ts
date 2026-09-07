@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 
-export const EditorTheme = Schema.Literal("vs-dark", "vs")
+export const EditorTheme = Schema.Literal("vs-dark", "vs", "solarized-dark", "solarized-light")
 export type EditorTheme = Schema.Schema.Type<typeof EditorTheme>
 
 export const SyncTrigger = Schema.Literal("manual", "interval", "onChange")

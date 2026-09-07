@@ -2,6 +2,8 @@
   "name": "wasm-db-browser-panel",
   "private": true,
   "type": "module",
+  "license": "MIT",
+  "author": "Phil Lui <phillui37@gmail.com>",
   "packageManager": "pnpm@12.3.4",
   "scripts": {
     "dev": "pnpm --filter @workbench/backend --filter @workbench/frontend --parallel dev",

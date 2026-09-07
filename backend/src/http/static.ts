@@ -39,8 +39,16 @@ export const spaMiddleware = (distDir: string) =>
           const exists = yield* fs.exists(file)
           if (!exists) return undefined
           const bytes = yield* fs.readFile(file)
+          const relativePath = path.relative(distRoot, file).replaceAll("\\", "/")
+          const immutable = relativePath.startsWith("assets/")
           return withIsolation(
-            HttpServerResponse.uint8Array(bytes).pipe(HttpServerResponse.setHeader("Content-Type", mime(file)))
+            HttpServerResponse.uint8Array(bytes).pipe(
+              HttpServerResponse.setHeader("Content-Type", mime(file)),
+              HttpServerResponse.setHeader(
+                "Cache-Control",
+                immutable ? "public, max-age=31536000, immutable" : "no-cache"
+              )
+            )
           )
         })
       if (safe) {

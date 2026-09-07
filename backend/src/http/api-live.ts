@@ -24,7 +24,9 @@ const ScriptsLive = HttpApiBuilder.group(WorkbenchApi, "scripts", (handlers) =>
     const scripts = yield* ScriptStore
     return handlers
       .handle("list", ({ path }) => scripts.list(path.connectionId))
-      .handle("put", ({ path, payload }) => scripts.put(path.connectionId, path.name, payload.sql))
+      .handle("put", ({ path, payload }) =>
+        scripts.put(path.connectionId, path.name, payload.sql, payload.pinned)
+      )
       .handle("remove", ({ path }) => scripts.remove(path.connectionId, path.name))
   })
 )
