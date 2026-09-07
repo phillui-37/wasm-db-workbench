@@ -35,3 +35,7 @@ Desktop.ini
 .idea/
 *.swp
 *~
+
+# transferred container images
+deploy/*.tar
+deploy/*.tar.gz

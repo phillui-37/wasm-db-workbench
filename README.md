@@ -2,23 +2,37 @@
 
 Browser-local SQL workbench for **PGlite** and **SQLite WASM**. Queries run in the browser. A small Effect TS backend stores scripts, query history, and host-synced dumps.
 
+Published image: [`docker.io/philluikgy/wasm-db-workbench`](https://hub.docker.com/r/philluikgy/wasm-db-workbench)
+
 ## Quick start (Docker / Podman)
+
+Building the frontend inside the image needs roughly **3GB+ RAM**. On a small VPS the build is OOM-killed (`exit 137`) — pull the published image instead.
+
+### Small VPS (pull from Docker Hub)
+
+```bash
+pnpm podman:pull-up
+# or: pnpm docker:pull-up
+```
+
+### Build & push (machine with enough RAM)
 
 ```bash
 # Docker
-pnpm docker:up
-# or: bash deploy/docker-up.sh
+pnpm docker:build && pnpm docker:push
 
 # Podman
-pnpm podman:up
-# or: bash deploy/podman-up.sh
+pnpm podman:build && pnpm podman:push
 ```
 
-Build only (no compose):
+Log in first: `docker login` / `podman login docker.io`
+
+CI: push to `master` (or run **Publish Docker image** workflow) after setting GitHub secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+
+### Full local compose build
 
 ```bash
-pnpm docker:build   # deploy/docker-build.sh
-pnpm podman:build   # deploy/podman-build.sh
+pnpm docker:up    # or: pnpm podman:up
 ```
 
 Open http://localhost:8080

@@ -1,0 +1,7 @@
+services:
+  workbench:
+    image: docker.io/philluikgy/wasm-db-workbench:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-prebuilt

@@ -3,11 +3,25 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    {
+      name: "stub-pglite-nodefs",
+      load(id) {
+        const normalized = id.replaceAll("\\", "/")
+        if (normalized.includes("@electric-sql/pglite") && normalized.includes("/fs/nodefs")) {
+          return "export default {}"
+        }
+      }
+    }
+  ],
   optimizeDeps: {
     exclude: ["@electric-sql/pglite", "@sqlite.org/sqlite-wasm"]
   },
   build: {
+    reportCompressedSize: false,
+    sourcemap: false,
     rollupOptions: {
       output: {
         manualChunks(id) {

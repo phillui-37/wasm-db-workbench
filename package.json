@@ -14,9 +14,21 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "docker:build": "bash deploy/docker-build.sh",
+    "docker:build:prebuilt": "bash deploy/docker-build-prebuilt.sh",
     "docker:up": "bash deploy/docker-up.sh",
+    "docker:up:prebuilt": "bash deploy/docker-up-prebuilt.sh",
+    "docker:save": "bash deploy/docker-save.sh",
+    "docker:load-up": "bash deploy/docker-load-up.sh",
+    "docker:push": "bash deploy/docker-push.sh",
+    "docker:pull-up": "bash deploy/docker-pull-up.sh",
     "podman:build": "bash deploy/podman-build.sh",
-    "podman:up": "bash deploy/podman-up.sh"
+    "podman:build:prebuilt": "bash deploy/podman-build-prebuilt.sh",
+    "podman:up": "bash deploy/podman-up.sh",
+    "podman:up:prebuilt": "bash deploy/podman-up-prebuilt.sh",
+    "podman:save": "bash deploy/podman-save.sh",
+    "podman:load-up": "bash deploy/podman-load-up.sh",
+    "podman:push": "bash deploy/podman-push.sh",
+    "podman:pull-up": "bash deploy/podman-pull-up.sh"
   },
   "devDependencies": {
     "@effect/vitest": "^0.30.0",

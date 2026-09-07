@@ -1,0 +1,9 @@
+node_modules
+**/node_modules
+.git
+.github
+**/.vite
+deploy/*.tar
+deploy/*.tar.gz
+**/*.test.ts
+backend/test
