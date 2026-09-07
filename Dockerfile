@@ -18,6 +18,9 @@ COPY frontend frontend
 COPY config config
 COPY tsconfig.base.json ./
 
+ARG NODE_OPTIONS=--max-old-space-size=4096
+ENV NODE_OPTIONS=$NODE_OPTIONS
+
 RUN pnpm --filter @workbench/frontend build
 
 ENV NODE_ENV=production

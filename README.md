@@ -2,11 +2,23 @@
 
 Browser-local SQL workbench for **PGlite** and **SQLite WASM**. Queries run in the browser. A small Effect TS backend stores scripts, query history, and host-synced dumps.
 
-## Quick start (Docker)
+## Quick start (Docker / Podman)
 
 ```bash
-npx pnpm install
-docker compose up --build
+# Docker
+pnpm docker:up
+# or: bash deploy/docker-up.sh
+
+# Podman
+pnpm podman:up
+# or: bash deploy/podman-up.sh
+```
+
+Build only (no compose):
+
+```bash
+pnpm docker:build   # deploy/docker-build.sh
+pnpm podman:build   # deploy/podman-build.sh
 ```
 
 Open http://localhost:8080

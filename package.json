@@ -12,7 +12,11 @@
     "build": "pnpm --filter @workbench/frontend build",
     "start": "pnpm --filter @workbench/backend start",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "docker:build": "bash deploy/docker-build.sh",
+    "docker:up": "bash deploy/docker-up.sh",
+    "podman:build": "bash deploy/podman-build.sh",
+    "podman:up": "bash deploy/podman-up.sh"
   },
   "devDependencies": {
     "@effect/vitest": "^0.30.0",
