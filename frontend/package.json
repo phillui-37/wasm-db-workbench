@@ -1,0 +1,32 @@
+{
+  "name": "@workbench/frontend",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@effect-atom/atom-react": "^0.7.0",
+    "@effect/platform": "^0.97.1",
+    "@effect/platform-browser": "^0.77.1",
+    "@electric-sql/pglite": "^0.3.14",
+    "@monaco-editor/react": "^4.7.0",
+    "@sqlite.org/sqlite-wasm": "3.50.4-build1",
+    "@workbench/shared": "workspace:*",
+    "effect": "^3.22.1",
+    "monaco-editor": "^0.52.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-resizable-panels": "^3.0.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.24",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5"
+  }
+}

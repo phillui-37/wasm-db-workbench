@@ -1,0 +1,24 @@
+editor:
+  theme: vs-dark
+  fontSize: 14
+  tabSize: 2
+query:
+  maxRows: 1000
+  confirmDestructive: true
+sync:
+  trigger: manual
+  intervalSeconds: 60
+  debounceMs: 2000
+  format: both
+  pullOnOpen: prompt
+storage:
+  dataDir: data
+  scriptsDir: scripts
+  historyLimit: 500
+engines:
+  pglite:
+    enabled: true
+  sqlite:
+    enabled: true
+defaults:
+  engine: pglite

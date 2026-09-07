@@ -1,0 +1,9 @@
+packages:
+  - shared
+  - backend
+  - frontend
+shamefullyHoist: true
+allowBuilds:
+  esbuild: true
+  "@parcel/watcher": true
+  msgpackr-extract: true

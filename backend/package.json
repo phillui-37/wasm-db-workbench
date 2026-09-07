@@ -1,0 +1,21 @@
+{
+  "name": "@workbench/backend",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@effect/platform": "^0.97.1",
+    "@effect/platform-node": "^0.108.1",
+    "@workbench/shared": "workspace:*",
+    "effect": "^3.22.1",
+    "tsx": "^4.20.5",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0"
+  }
+}

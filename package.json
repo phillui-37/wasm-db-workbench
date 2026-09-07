@@ -1,0 +1,21 @@
+{
+  "name": "wasm-db-browser-panel",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.3.4",
+  "scripts": {
+    "dev": "pnpm --filter @workbench/backend --filter @workbench/frontend --parallel dev",
+    "dev:backend": "pnpm --filter @workbench/backend dev",
+    "dev:frontend": "pnpm --filter @workbench/frontend dev",
+    "build": "pnpm --filter @workbench/frontend build",
+    "start": "pnpm --filter @workbench/backend start",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@effect/vitest": "^0.30.0",
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
