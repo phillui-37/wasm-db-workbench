@@ -360,6 +360,20 @@ export const Workbench = ({
       })
     ).then((s) => {
       setScripts((list) => [...list.filter((x) => x.name !== s.name), s])
+      const nextId = `script:${s.name}`
+      const sql = editorRef.current?.getValue() || tab.sql
+      setTabs((list) => {
+        const others = list.filter((t) => t.id !== tab.id)
+        if (others.some((t) => t.id === nextId)) {
+          return others.map((t) =>
+            t.id === nextId && t.kind === "sql" ? { ...t, title: `${s.name}.sql`, sql } : t
+          )
+        }
+        return list.map((t) =>
+          t.id === tab.id && t.kind === "sql" ? { ...t, id: nextId, title: `${s.name}.sql`, sql } : t
+        )
+      })
+      setActiveTab(nextId)
       setSnack(`Saved ${s.name}.sql`)
     })
   }
@@ -523,8 +537,16 @@ export const Workbench = ({
           <ScriptList
             scripts={scripts}
             onOpen={(s) => {
-              const id = crypto.randomUUID()
-              setTabs((list) => [...list, { id, kind: "sql", title: `${s.name}.sql`, sql: s.sql }])
+              const id = `script:${s.name}`
+              setTabs((list) => {
+                const existing = list.find((t) => t.id === id)
+                if (existing) {
+                  return list.map((t) =>
+                    t.id === id && t.kind === "sql" ? { ...t, title: `${s.name}.sql`, sql: s.sql } : t
+                  )
+                }
+                return [...list, { id, kind: "sql", title: `${s.name}.sql`, sql: s.sql }]
+              })
               setActiveTab(id)
             }}
           />
