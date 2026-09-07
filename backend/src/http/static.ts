@@ -1,15 +1,17 @@
 import { FileSystem, HttpMiddleware, HttpServerRequest, HttpServerResponse, Path } from "@effect/platform"
 import { Effect } from "effect"
 
-const mime = (file: string): string => {
-  if (file.endsWith(".html")) return "text/html; charset=utf-8"
-  if (file.endsWith(".js")) return "text/javascript; charset=utf-8"
-  if (file.endsWith(".css")) return "text/css; charset=utf-8"
-  if (file.endsWith(".wasm")) return "application/wasm"
-  if (file.endsWith(".json")) return "application/json"
-  if (file.endsWith(".svg")) return "image/svg+xml"
-  if (file.endsWith(".woff2")) return "font/woff2"
-  if (file.endsWith(".map")) return "application/json"
+const mimeFromPath = (file: string): string => {
+  const lower = file.replaceAll("\\", "/").toLowerCase()
+  if (lower.endsWith(".html")) return "text/html; charset=utf-8"
+  if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "text/javascript; charset=utf-8"
+  if (lower.endsWith(".css")) return "text/css; charset=utf-8"
+  if (lower.endsWith(".wasm")) return "application/wasm"
+  if (lower.endsWith(".json") || lower.endsWith(".map")) return "application/json"
+  if (lower.endsWith(".svg")) return "image/svg+xml"
+  if (lower.endsWith(".woff2")) return "font/woff2"
+  if (lower.endsWith(".ttf") || lower.endsWith(".otf")) return "font/ttf"
+  if (lower.endsWith(".data")) return "application/octet-stream"
   return "application/octet-stream"
 }
 
@@ -41,9 +43,9 @@ export const spaMiddleware = (distDir: string) =>
           const bytes = yield* fs.readFile(file)
           const relativePath = path.relative(distRoot, file).replaceAll("\\", "/")
           const immutable = relativePath.startsWith("assets/")
+          // contentType must be set on the body options — setHeader alone is ignored for body type
           return withIsolation(
-            HttpServerResponse.uint8Array(bytes).pipe(
-              HttpServerResponse.setHeader("Content-Type", mime(file)),
+            HttpServerResponse.uint8Array(bytes, { contentType: mimeFromPath(file) }).pipe(
               HttpServerResponse.setHeader(
                 "Cache-Control",
                 immutable ? "public, max-age=31536000, immutable" : "no-cache"
