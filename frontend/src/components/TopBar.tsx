@@ -16,6 +16,7 @@ type Props = {
   canRun: boolean
   hasConnection: boolean
   onRun: () => void
+  onRunScript: () => void
   onCancel: () => void
   onSave: () => void
   onSync: () => void
@@ -37,6 +38,7 @@ export const TopBar = ({
   canRun,
   hasConnection,
   onRun,
+  onRunScript,
   onCancel,
   onSave,
   onSync,
@@ -63,8 +65,17 @@ export const TopBar = ({
         {authUsername}
       </Typography>
       <Stack direction="row" spacing={0.5} className="ml-auto flex-wrap">
-        <Button variant="contained" startIcon={<PlayArrow />} disabled={!canRun} onClick={onRun}>
+        <Button
+          variant="contained"
+          startIcon={<PlayArrow />}
+          disabled={!canRun}
+          onClick={onRun}
+          title="Run statement at cursor (Ctrl/Cmd+Enter)"
+        >
           Run
+        </Button>
+        <Button disabled={!canRun} onClick={onRunScript} title="Run entire script (Ctrl/Cmd+Shift+Enter)">
+          Run script
         </Button>
         <Button startIcon={<Stop />} disabled={!running} onClick={onCancel}>
           Cancel

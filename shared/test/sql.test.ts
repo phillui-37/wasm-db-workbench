@@ -10,7 +10,8 @@ import {
   lastKeywordContext,
   quoteLiteral,
   runStatements,
-  splitStatements
+  splitStatements,
+  statementAtOffset
 } from "@workbench/shared"
 import { Effect } from "effect"
 
@@ -56,6 +57,17 @@ describe("sql helpers", () => {
         "SELECT $tag$ a;b $tag$",
         "SELECT 2"
       ])
+    })
+  )
+
+  it.effect("picks the statement at the cursor offset", () =>
+    Effect.sync(() => {
+      const script = "SELECT 1;\nSELECT 2;\nSELECT 3"
+      expect(statementAtOffset(script, 0)).toBe("SELECT 1")
+      expect(statementAtOffset(script, script.indexOf("2"))).toBe("SELECT 2")
+      expect(statementAtOffset(script, script.length)).toBe("SELECT 3")
+      expect(statementAtOffset(script, script.indexOf(";"))).toBe("SELECT 1")
+      expect(statementAtOffset(script, script.indexOf(";") + 1)).toBe("SELECT 2")
     })
   )
 

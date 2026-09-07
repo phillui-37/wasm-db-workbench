@@ -14,15 +14,28 @@ type Props = {
   catalog?: Catalog
   onChange: (value: string) => void
   onRun?: () => void
+  onRunScript?: () => void
   onMount?: (ed: editor.IStandaloneCodeEditor) => void
 }
 
 const SYNC_DEBOUNCE_MS = 300
 
-export const SqlEditor = ({ value, dialect, theme, fontSize, tabSize, catalog, onChange, onRun, onMount }: Props) => {
+export const SqlEditor = ({
+  value,
+  dialect,
+  theme,
+  fontSize,
+  tabSize,
+  catalog,
+  onChange,
+  onRun,
+  onRunScript,
+  onMount
+}: Props) => {
   const catalogRef = useRef(catalog)
   const dialectRef = useRef(dialect)
   const onRunRef = useRef(onRun)
+  const onRunScriptRef = useRef(onRunScript)
   const onChangeRef = useRef(onChange)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const lastEmitted = useRef(value)
@@ -31,8 +44,9 @@ export const SqlEditor = ({ value, dialect, theme, fontSize, tabSize, catalog, o
     catalogRef.current = catalog
     dialectRef.current = dialect
     onRunRef.current = onRun
+    onRunScriptRef.current = onRunScript
     onChangeRef.current = onChange
-  }, [catalog, dialect, onRun, onChange])
+  }, [catalog, dialect, onRun, onRunScript, onChange])
 
   useEffect(
     () => () => {
@@ -65,6 +79,10 @@ export const SqlEditor = ({ value, dialect, theme, fontSize, tabSize, catalog, o
         ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
           flush(ed.getValue())
           onRunRef.current?.()
+        })
+        ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
+          flush(ed.getValue())
+          onRunScriptRef.current?.()
         })
         ed.onDidBlurEditorWidget(() => flush(ed.getValue()))
         onMount?.(ed)

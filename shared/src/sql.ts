@@ -60,9 +60,18 @@ export const leadingKeyword = (stmt: string): string => {
   return ""
 }
 
-export const splitStatements = (sql: string): Array<string> => {
-  const out: Array<string> = []
-  const parts: Array<string> = []
+export type StatementRange = {
+  sql: string
+  /** Inclusive start index in the original script (first non-space of the statement). */
+  start: number
+  /** Exclusive end index (after last char of statement, before trailing semicolon if any). */
+  end: number
+}
+
+export const splitStatementRanges = (sql: string): Array<StatementRange> => {
+  const out: Array<StatementRange> = []
+  let stmtStart = -1
+  let lastNonWs = -1
   let i = 0
   let inSingle = false
   let inDouble = false
@@ -70,10 +79,18 @@ export const splitStatements = (sql: string): Array<string> => {
   let inBlock = false
   let dollar: string | undefined
 
+  const mark = (idx: number) => {
+    if (stmtStart < 0) stmtStart = idx
+    lastNonWs = idx
+  }
+
   const push = () => {
-    const stmt = parts.join("").trim()
-    if (stmt) out.push(stmt)
-    parts.length = 0
+    if (stmtStart >= 0 && lastNonWs >= stmtStart) {
+      const text = sql.slice(stmtStart, lastNonWs + 1).trim()
+      if (text) out.push({ sql: text, start: stmtStart, end: lastNonWs + 1 })
+    }
+    stmtStart = -1
+    lastNonWs = -1
   }
 
   while (i < sql.length) {
@@ -81,15 +98,15 @@ export const splitStatements = (sql: string): Array<string> => {
     const n = sql[i + 1]
 
     if (inLine) {
-      parts.push(c)
+      mark(i)
       if (c === "\n") inLine = false
       i++
       continue
     }
     if (inBlock) {
-      parts.push(c)
+      mark(i)
       if (c === "*" && n === "/") {
-        parts.push(n!)
+        mark(i + 1)
         i += 2
         inBlock = false
         continue
@@ -99,19 +116,19 @@ export const splitStatements = (sql: string): Array<string> => {
     }
     if (dollar) {
       if (sql.startsWith(dollar, i)) {
-        parts.push(dollar)
+        for (let k = 0; k < dollar.length; k++) mark(i + k)
         i += dollar.length
         dollar = undefined
         continue
       }
-      parts.push(c)
+      mark(i)
       i++
       continue
     }
     if (inSingle) {
-      parts.push(c)
+      mark(i)
       if (c === "'" && n === "'") {
-        parts.push(n!)
+        mark(i + 1)
         i += 2
         continue
       }
@@ -120,9 +137,9 @@ export const splitStatements = (sql: string): Array<string> => {
       continue
     }
     if (inDouble) {
-      parts.push(c)
+      mark(i)
       if (c === "\"" && n === "\"") {
-        parts.push(n!)
+        mark(i + 1)
         i += 2
         continue
       }
@@ -133,25 +150,25 @@ export const splitStatements = (sql: string): Array<string> => {
 
     if (c === "-" && n === "-") {
       inLine = true
-      parts.push(c)
+      mark(i)
       i++
       continue
     }
     if (c === "/" && n === "*") {
       inBlock = true
-      parts.push(c)
+      mark(i)
       i++
       continue
     }
     if (c === "'") {
       inSingle = true
-      parts.push(c)
+      mark(i)
       i++
       continue
     }
     if (c === "\"") {
       inDouble = true
-      parts.push(c)
+      mark(i)
       i++
       continue
     }
@@ -159,7 +176,7 @@ export const splitStatements = (sql: string): Array<string> => {
       const tag = sql.slice(i).match(/^\$[A-Za-z_]*\$/)
       if (tag) {
         dollar = tag[0]
-        parts.push(tag[0])
+        for (let k = 0; k < tag[0].length; k++) mark(i + k)
         i += tag[0].length
         continue
       }
@@ -169,11 +186,32 @@ export const splitStatements = (sql: string): Array<string> => {
       i++
       continue
     }
-    parts.push(c)
+    if (!/\s/.test(c)) mark(i)
+    else if (stmtStart >= 0) {
+      // keep whitespace inside a started statement
+    }
     i++
   }
   push()
   return out
+}
+
+export const splitStatements = (sql: string): Array<string> =>
+  splitStatementRanges(sql).map((r) => r.sql)
+
+/** Statement containing offset, or the nearest following / preceding one. */
+export const statementAtOffset = (sql: string, offset: number): string => {
+  const ranges = splitStatementRanges(sql)
+  if (ranges.length === 0) return sql.trim()
+  const clamped = Math.max(0, Math.min(offset, sql.length))
+  for (const r of ranges) {
+    if (clamped >= r.start && clamped <= r.end) return r.sql
+  }
+  // Between statements (e.g. on semicolon or blank line): prefer next, else previous
+  for (const r of ranges) {
+    if (clamped < r.start) return r.sql
+  }
+  return ranges[ranges.length - 1]!.sql
 }
 
 const statementIsDestructive = (s: string): boolean => {

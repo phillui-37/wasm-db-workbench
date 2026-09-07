@@ -5,6 +5,7 @@ import {
   defaultAppConfig,
   lastResult,
   qualifyTable,
+  statementAtOffset,
   type AppConfig,
   type Catalog,
   type ConnectionMeta,
@@ -22,7 +23,7 @@ import { Snackbar, Tab, Tabs } from "@mui/material"
 import CssBaseline from "@mui/material/CssBaseline"
 import { ThemeProvider } from "@mui/material/styles"
 import { SqlEditor } from "../editor/SqlEditor.tsx"
-import { downloadBytes, downloadText, toCsv } from "../engines/dump.ts"
+import { downloadBytes, downloadText, fetchTableDdl, tableCreateSql, toCsv } from "../engines/dump.ts"
 import { openEngine } from "../engines/hub.ts"
 import { ConnectionHub as HubTag, runFork, runPromise, SyncController, WorkbenchClient } from "../runtime.ts"
 import { builtinSnippets } from "../snippets.ts"
@@ -35,6 +36,7 @@ import { ScriptList } from "./ScriptList.tsx"
 import { SettingsDrawer } from "./SettingsDrawer.tsx"
 import { SnippetPalette } from "./SnippetPalette.tsx"
 import { SqlResults } from "./SqlResults.tsx"
+import { TableSchemaView } from "./TableSchemaView.tsx"
 import { TopBar } from "./TopBar.tsx"
 
 type TabState =
@@ -78,6 +80,7 @@ export const Workbench = ({
   const [activeTab, setActiveTab] = useState("q1")
   const [statements, setStatements] = useState<Array<StatementResult>>([])
   const [dataStatements, setDataStatements] = useState<Array<StatementResult>>([])
+  const [tableDdl, setTableDdl] = useState("")
   const [activeResult, setActiveResult] = useState(0)
   const [message, setMessage] = useState("Ready")
   const [snack, setSnack] = useState<string | undefined>()
@@ -314,8 +317,23 @@ export const Workbench = ({
 
   const runActive = () => {
     if (tab?.kind !== "sql") return
-    const selected = editorRef.current?.getModel()?.getValueInRange(editorRef.current.getSelection()!)
-    runSql((selected && selected.trim()) || editorRef.current?.getValue() || tab.sql)
+    const ed = editorRef.current
+    const model = ed?.getModel()
+    const selection = ed?.getSelection()
+    const selected = selection && model ? model.getValueInRange(selection) : ""
+    if (selected.trim()) {
+      runSql(selected)
+      return
+    }
+    const full = ed?.getValue() || tab.sql
+    const pos = ed?.getPosition()
+    const offset = pos && model ? model.getOffsetAt(pos) : 0
+    runSql(statementAtOffset(full, offset))
+  }
+
+  const runScript = () => {
+    if (tab?.kind !== "sql") return
+    runSql(editorRef.current?.getValue() || tab.sql)
   }
 
   const formatSql = () => {
@@ -371,6 +389,25 @@ export const Workbench = ({
     }
   }, [activeId, dataPage?.id, dataPage?.page, config.query.maxRows])
 
+  useEffect(() => {
+    if (!active || !dataPage) {
+      setTableDdl("")
+      return
+    }
+    const table =
+      catalog?.tables.find((t) => t.schema === dataPage.table.schema && t.name === dataPage.table.name) ??
+      dataPage.table
+    setTableDdl(tableCreateSql(dialect, table))
+    runFork(
+      Effect.gen(function* () {
+        const hub = yield* HubTag
+        const engine = yield* hub.get(active.id)
+        const ddl = yield* fetchTableDdl(engine, table)
+        setTableDdl(ddl)
+      }).pipe(Effect.catchAll(() => Effect.void))
+    )
+  }, [activeId, dataPage?.id, catalog, dialect])
+
   const snippetItems = useMemo(
     () => [
       ...builtinSnippets.map((s) => ({ name: s.name, sql: s.sql })),
@@ -394,6 +431,7 @@ export const Workbench = ({
         canRun={Boolean(active) && !running && tab?.kind === "sql"}
         hasConnection={Boolean(active)}
         onRun={runActive}
+        onRunScript={runScript}
         onCancel={() => {
           if (fiberRef.current) runFork(Fiber.interrupt(fiberRef.current))
           setRunning(false)
@@ -549,6 +587,7 @@ export const Workbench = ({
                       tabSize={config.editor.tabSize}
                       catalog={catalog}
                       onRun={runActive}
+                      onRunScript={runScript}
                       onChange={(sql) =>
                         setTabs((list) => list.map((t) => (t.id === tab.id && t.kind === "sql" ? { ...t, sql } : t)))
                       }
@@ -662,7 +701,14 @@ export const Workbench = ({
             <PanelResizeHandle className="h-1 bg-[var(--mui-palette-divider)]" />
             <Panel defaultSize={32} minSize={18}>
               {tab?.kind === "data" ? (
-                <div className="p-2 text-sm opacity-70">{message}</div>
+                <TableSchemaView
+                  table={
+                    catalog?.tables.find(
+                      (t) => t.schema === tab.table.schema && t.name === tab.table.name
+                    ) ?? tab.table
+                  }
+                  ddl={tableDdl}
+                />
               ) : (
                 <SqlResults
                   pane={bottom}
