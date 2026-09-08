@@ -78,6 +78,18 @@ const idbPut = (key: string, value: Uint8Array) =>
     catch: (e) => new SqlExecError({ message: String(e) })
   })
 
+export const wipeSqliteLocal = (key: string) =>
+  new Promise<void>((resolve, reject) => {
+    void openIdb()
+      .then((db) => {
+        const tx = db.transaction("kv", "readwrite")
+        tx.objectStore("kv").delete(key)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+      .catch(reject)
+  })
+
 const execQuery = (db: SqliteDb, sql: string, params?: QueryParams): QueryResult => {
   const started = Date.now()
   const resultRows: Array<Array<string | number | bigint | Uint8Array | Int8Array | ArrayBuffer | null>> = []

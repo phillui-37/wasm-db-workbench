@@ -19,6 +19,7 @@ export class HistoryStore extends Context.Tag("app/HistoryStore")<
   {
     readonly list: (connectionId: string) => Effect.Effect<ReadonlyArray<HistoryEntry>, HistoryErr>
     readonly append: (connectionId: string, write: HistoryWrite) => Effect.Effect<HistoryEntry, HistoryErr>
+    readonly drop: (connectionId: string) => Effect.Effect<void>
   }
 >() {}
 
@@ -91,7 +92,14 @@ export const makeHistoryStore = Effect.gen(function* () {
       return entry
     })
 
-  return HistoryStore.of({ list, append })
+  const drop = (connectionId: string) =>
+    Ref.update(memory, (map) => {
+      const next = new Map(map)
+      next.delete(connectionId)
+      return next
+    })
+
+  return HistoryStore.of({ list, append, drop })
 })
 
 export const HistoryStoreLive = Layer.effect(HistoryStore, makeHistoryStore)

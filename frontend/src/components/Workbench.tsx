@@ -25,6 +25,7 @@ import { ThemeProvider } from "@mui/material/styles"
 import { SqlEditor } from "../editor/SqlEditor.tsx"
 import { downloadBytes, downloadText, fetchTableDdl, tableCreateSql, toCsv } from "../engines/dump.ts"
 import { openEngine } from "../engines/hub.ts"
+import { wipeLocalEngine } from "../engines/wipe.ts"
 import { ConnectionHub as HubTag, runFork, runPromise, SyncController, WorkbenchClient } from "../runtime.ts"
 import { builtinSnippets } from "../snippets.ts"
 import { workbenchTheme } from "../theme.ts"
@@ -34,6 +35,7 @@ import { ParamsDialog } from "./ParamsDialog.tsx"
 import { SchemaTree } from "./SchemaTree.tsx"
 import { ScriptList } from "./ScriptList.tsx"
 import { SettingsDrawer } from "./SettingsDrawer.tsx"
+import { SideSection } from "./SideSection.tsx"
 import { SnippetPalette } from "./SnippetPalette.tsx"
 import { SqlResults } from "./SqlResults.tsx"
 import { TableSchemaView } from "./TableSchemaView.tsx"
@@ -53,6 +55,15 @@ const loadConnections = (): Array<ConnectionMeta> => {
 
 const saveConnections = (list: Array<ConnectionMeta>) => {
   localStorage.setItem("workbench.connections", JSON.stringify(list))
+}
+
+const mergeConnections = (local: Array<ConnectionMeta>, remote: Array<ConnectionMeta>) => {
+  const byId = new Map<string, ConnectionMeta>()
+  for (const item of remote) byId.set(item.id, item)
+  for (const item of local) {
+    if (!byId.has(item.id)) byId.set(item.id, item)
+  }
+  return [...byId.values()]
 }
 
 const ACTIVE_ID_KEY = "workbench.activeId"
@@ -100,6 +111,7 @@ export const Workbench = ({
   const configRef = useRef(config)
   configRef.current = config
   const autoOpened = useRef(false)
+  const hostCatalogReady = useRef(false)
 
   const active = connections.find((c) => c.id === activeId)
   const dialect = active?.engine === "sqlite" ? "sqlite" : "pgsql"
@@ -135,6 +147,8 @@ export const Workbench = ({
 
   useEffect(() => {
     saveConnections(connections)
+    if (!hostCatalogReady.current) return
+    void withClient((client) => client.connections.put({ payload: connections })).catch(() => undefined)
   }, [connections])
 
   useEffect(() => {
@@ -151,7 +165,7 @@ export const Workbench = ({
       const cfg = configRef.current
       const sync = yield* SyncController
       if (cfg.sync.trigger === "interval") {
-        yield* sync.startInterval(meta.id, cfg.sync.intervalSeconds, cfg.sync.format, meta.engine)
+        yield* sync.startInterval(meta.id, cfg.sync.intervalSeconds, cfg.sync.format, meta.engine, meta.name)
       }
       if (cfg.sync.pullOnOpen !== "never") {
         const client = yield* WorkbenchClient
@@ -190,17 +204,17 @@ export const Workbench = ({
         const cfg = yield* client.config.get()
         setConfig(cfg)
         setNewEngine(cfg.defaults.engine)
-      })
-    )
-      .then(() => {
+        const remote = yield* client.connections.list().pipe(Effect.orElseSucceed(() => [] as Array<ConnectionMeta>))
+        const merged = mergeConnections(loadConnections(), [...remote])
+        hostCatalogReady.current = true
+        setConnections(merged)
         if (autoOpened.current) return
         autoOpened.current = true
-        const list = loadConnections()
         const saved = loadActiveId()
-        const meta = list.find((c) => c.id === saved) ?? list[0]
+        const meta = merged.find((c) => c.id === saved) ?? merged[0]
         if (meta) selectConnection(meta)
       })
-      .catch(() => undefined)
+    ).catch(() => undefined)
   }, [])
 
   const createConnection = () => {
@@ -221,22 +235,28 @@ export const Workbench = ({
   }
 
   const deleteConnection = (meta: ConnectionMeta) => {
-    if (!confirm(`Delete ${meta.name}?`)) return
+    if (!confirm(`Delete ${meta.name} and all synced files on the host?`)) return
     runFork(
       Effect.gen(function* () {
         const hub = yield* HubTag
         yield* hub.close(meta.id).pipe(Effect.ignore)
         const sync = yield* SyncController
         yield* sync.stop(meta.id).pipe(Effect.ignore)
-      })
+        yield* wipeLocalEngine(meta.id, meta.engine)
+        const client = yield* WorkbenchClient
+        yield* client.connections.remove({ path: { connectionId: meta.id } })
+        const next = connections.filter((c) => c.id !== meta.id)
+        setConnections(next)
+        if (activeId === meta.id) {
+          setActiveId(next[0]?.id)
+          setCatalog(undefined)
+          setHistory([])
+          setScripts([])
+          if (next[0]) selectConnection(next[0])
+        }
+        setSnack(`Deleted ${meta.name}`)
+      }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
     )
-    const next = connections.filter((c) => c.id !== meta.id)
-    setConnections(next)
-    if (activeId === meta.id) {
-      setActiveId(next[0]?.id)
-      setCatalog(undefined)
-      if (next[0]) selectConnection(next[0])
-    }
   }
 
   const executeSql = (sql: string, values?: Record<string, unknown>) => {
@@ -278,7 +298,8 @@ export const Workbench = ({
           active.id,
           configRef.current.sync.debounceMs,
           configRef.current.sync.format,
-          active.engine
+          active.engine,
+          active.name
         )
       }
     }).pipe(
@@ -461,7 +482,7 @@ export const Workbench = ({
           runFork(
             Effect.gen(function* () {
               const sync = yield* SyncController
-              yield* sync.push(active.id, config.sync.format, active.engine)
+              yield* sync.push(active.id, config.sync.format, active.engine, active.name)
               setSnack("Synced to host")
             }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
           )
@@ -473,6 +494,7 @@ export const Workbench = ({
               const sync = yield* SyncController
               yield* sync.pull(active.id)
               refreshCatalog(active.id)
+              refreshSide(active.id)
               setSnack("Pulled from host")
             }).pipe(Effect.catchAll((e) => Effect.sync(() => setMessage(String(e)))))
           )
@@ -519,7 +541,9 @@ export const Workbench = ({
         onSettings={() => setSettingsOpen(true)}
       />
       <PanelGroup direction="horizontal" className="min-h-0 flex-1">
-        <Panel defaultSize={18} minSize={12} className="overflow-auto p-2">
+        <Panel defaultSize={18} minSize={12} className="min-h-0">
+          <div className="flex h-full min-h-0 flex-col overflow-auto p-2">
+          <SideSection id="connections" title="Connections">
           <ConnectionList
             connections={connections}
             activeId={activeId}
@@ -533,23 +557,24 @@ export const Workbench = ({
             onRename={renameConnection}
             onDelete={deleteConnection}
           />
+          </SideSection>
+          <SideSection id="schema" title="Schema">
           <SchemaTree catalog={catalog} onOpenTable={openTable} />
+          </SideSection>
+          <SideSection id="scripts" title="Scripts">
           <ScriptList
             scripts={scripts}
             onOpen={(s) => {
               const id = `script:${s.name}`
               setTabs((list) => {
-                const existing = list.find((t) => t.id === id)
-                if (existing) {
-                  return list.map((t) =>
-                    t.id === id && t.kind === "sql" ? { ...t, title: `${s.name}.sql`, sql: s.sql } : t
-                  )
-                }
+                if (list.some((t) => t.id === id)) return list
                 return [...list, { id, kind: "sql", title: `${s.name}.sql`, sql: s.sql }]
               })
               setActiveTab(id)
             }}
           />
+          </SideSection>
+          </div>
         </Panel>
         <PanelResizeHandle className="w-1 bg-[var(--mui-palette-divider)]" />
         <Panel minSize={40}>
@@ -602,6 +627,7 @@ export const Workbench = ({
                 <div className="min-h-0 flex-1">
                   {tab?.kind === "sql" ? (
                     <SqlEditor
+                      tabId={tab.id}
                       value={tab.sql}
                       dialect={dialect}
                       theme={config.editor.theme}
@@ -610,8 +636,8 @@ export const Workbench = ({
                       catalog={catalog}
                       onRun={runActive}
                       onRunScript={runScript}
-                      onChange={(sql) =>
-                        setTabs((list) => list.map((t) => (t.id === tab.id && t.kind === "sql" ? { ...t, sql } : t)))
+                      onChange={(id, sql) =>
+                        setTabs((list) => list.map((t) => (t.id === id && t.kind === "sql" ? { ...t, sql } : t)))
                       }
                       onMount={(ed) => {
                         editorRef.current = ed
@@ -704,7 +730,8 @@ export const Workbench = ({
                                     active.id,
                                     config.sync.debounceMs,
                                     config.sync.format,
-                                    active.engine
+                                    active.engine,
+                                    active.name
                                   )
                                 }
                                 setSnack("Cell updated")
@@ -787,7 +814,7 @@ export const Workbench = ({
               runFork(
                 Effect.gen(function* () {
                   const sync = yield* SyncController
-                  yield* sync.startInterval(active.id, saved.sync.intervalSeconds, saved.sync.format, active.engine)
+                  yield* sync.startInterval(active.id, saved.sync.intervalSeconds, saved.sync.format, active.engine, active.name)
                 })
               )
             }

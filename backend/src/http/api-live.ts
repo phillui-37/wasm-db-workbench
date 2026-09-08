@@ -2,6 +2,7 @@ import { HttpApiBuilder } from "@effect/platform"
 import { AuthFailedError, UnauthorizedError, WorkbenchApi } from "@workbench/shared"
 import { Effect, Layer } from "effect"
 import { ConfigService } from "../config-service.ts"
+import { ConnectionStore } from "../connection-store.ts"
 import { HistoryStore } from "../history-store.ts"
 import { ScriptStore } from "../script-store.ts"
 import { SyncStore } from "../sync-store.ts"
@@ -41,6 +42,19 @@ const ScriptsLive = HttpApiBuilder.group(WorkbenchApi, "scripts", (handlers) =>
   })
 )
 
+const ConnectionsLive = HttpApiBuilder.group(WorkbenchApi, "connections", (handlers) =>
+  Effect.gen(function* () {
+    const connections = yield* ConnectionStore
+    const history = yield* HistoryStore
+    return handlers
+      .handle("list", () => connections.list)
+      .handle("put", ({ payload }) => connections.putAll(payload))
+      .handle("remove", ({ path }) =>
+        history.drop(path.connectionId).pipe(Effect.zipRight(connections.remove(path.connectionId)))
+      )
+  })
+)
+
 const HistoryLive = HttpApiBuilder.group(WorkbenchApi, "history", (handlers) =>
   Effect.gen(function* () {
     const history = yield* HistoryStore
@@ -64,6 +78,7 @@ export const ApiLive = HttpApiBuilder.api(WorkbenchApi).pipe(
   Layer.provide(HealthLive),
   Layer.provide(AuthLive),
   Layer.provide(ConfigLive),
+  Layer.provide(ConnectionsLive),
   Layer.provide(ScriptsLive),
   Layer.provide(HistoryLive),
   Layer.provide(SyncLive)

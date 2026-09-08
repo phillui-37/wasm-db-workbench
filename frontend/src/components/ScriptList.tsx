@@ -1,5 +1,5 @@
 import PushPin from "@mui/icons-material/PushPin"
-import { List, ListItemButton, ListItemText, TextField, Typography } from "@mui/material"
+import { List, ListItemButton, ListItemText, TextField } from "@mui/material"
 import type { Script } from "@workbench/shared"
 import { useState } from "react"
 
@@ -12,10 +12,7 @@ export const ScriptList = ({ scripts, onOpen }: Props) => {
   const [filter, setFilter] = useState("")
   const visible = scripts.filter((s) => s.name.toLowerCase().includes(filter.toLowerCase()))
   return (
-    <section className="mt-4">
-      <Typography variant="overline" color="text.secondary">
-        Scripts
-      </Typography>
+    <div>
       <TextField
         size="small"
         fullWidth
@@ -38,6 +35,6 @@ export const ScriptList = ({ scripts, onOpen }: Props) => {
           </ListItemButton>
         ))}
       </List>
-    </section>
+    </div>
   )
 }

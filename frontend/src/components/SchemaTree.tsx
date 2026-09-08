@@ -1,8 +1,8 @@
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView"
 import { TreeItem } from "@mui/x-tree-view/TreeItem"
-import { TextField, Typography } from "@mui/material"
+import { TextField } from "@mui/material"
 import type { Catalog, Table } from "@workbench/shared"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 
 type Props = {
   catalog?: Catalog
@@ -25,19 +25,8 @@ export const SchemaTree = ({ catalog, onOpenTable }: Props) => {
   const schemas = useMemo(() => [...new Set(tables.map((t) => t.schema))], [tables])
   const [expanded, setExpanded] = useState<Array<string>>([])
 
-  useEffect(() => {
-    const schemaIds = schemas.map((s) => `schema:${s}`)
-    setExpanded((prev) => {
-      const missing = schemaIds.filter((id) => !prev.includes(id))
-      return missing.length > 0 ? [...prev, ...missing] : prev
-    })
-  }, [schemas.join("|")])
-
   return (
-    <section className="mt-4">
-      <Typography variant="overline" color="text.secondary">
-        Schema
-      </Typography>
+    <div>
       <TextField
         size="small"
         fullWidth
@@ -47,7 +36,7 @@ export const SchemaTree = ({ catalog, onOpenTable }: Props) => {
         onChange={(e) => setFilter(e.target.value)}
       />
       <SimpleTreeView
-        expansionTrigger="content"
+        expansionTrigger="iconContainer"
         expandedItems={expanded}
         onExpandedItemsChange={(_e, ids) => setExpanded(ids)}
         onItemClick={(_e, id) => {
@@ -85,6 +74,6 @@ export const SchemaTree = ({ catalog, onOpenTable }: Props) => {
           </TreeItem>
         ))}
       </SimpleTreeView>
-    </section>
+    </div>
   )
 }

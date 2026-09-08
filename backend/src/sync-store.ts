@@ -65,7 +65,10 @@ export const makeSyncStore = Effect.gen(function* () {
         yield* writeBinary(path.join(dir, binaryName(body.engine)), body.binaryBase64)
       }
       yield* fs
-        .writeFileString(path.join(dir, "meta.json"), JSON.stringify({ engine: body.engine, updatedAt: Date.now() }))
+        .writeFileString(
+          path.join(dir, "meta.json"),
+          JSON.stringify({ engine: body.engine, name: body.name, updatedAt: Date.now() })
+        )
         .pipe(Effect.mapError(io))
       return {
         connectionId,

@@ -15,6 +15,7 @@ import {
   AuthMe,
   AuthOk,
   ConnectionIdPath,
+  ConnectionMeta,
   Health,
   HistoryEntry,
   HistoryWrite,
@@ -82,6 +83,31 @@ const scriptsGroup = HttpApiGroup.make("scripts")
       .addError(ConfigIoError, { status: 500 })
   )
 
+const connectionsGroup = HttpApiGroup.make("connections")
+  .add(
+    HttpApiEndpoint.get("list", "/connections")
+      .addSuccess(Schema.Array(ConnectionMeta))
+      .addError(PathUnsafeError, { status: 400 })
+      .addError(ConfigParseError, { status: 400 })
+      .addError(ConfigIoError, { status: 500 })
+  )
+  .add(
+    HttpApiEndpoint.put("put", "/connections")
+      .setPayload(Schema.Array(ConnectionMeta))
+      .addSuccess(Schema.Array(ConnectionMeta))
+      .addError(PathUnsafeError, { status: 400 })
+      .addError(ConfigParseError, { status: 400 })
+      .addError(ConfigIoError, { status: 500 })
+  )
+  .add(
+    HttpApiEndpoint.del("remove", "/connections/:connectionId")
+      .setPath(ConnectionIdPath)
+      .addSuccess(Schema.Void)
+      .addError(PathUnsafeError, { status: 400 })
+      .addError(ConfigParseError, { status: 400 })
+      .addError(ConfigIoError, { status: 500 })
+  )
+
 const historyGroup = HttpApiGroup.make("history")
   .add(
     HttpApiEndpoint.get("list", "/history/:connectionId")
@@ -133,6 +159,7 @@ export class WorkbenchApi extends HttpApi.make("workbench")
   .add(healthGroup)
   .add(authGroup)
   .add(configGroup)
+  .add(connectionsGroup)
   .add(scriptsGroup)
   .add(historyGroup)
   .add(syncGroup)

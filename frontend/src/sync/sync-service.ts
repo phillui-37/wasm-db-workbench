@@ -13,20 +13,27 @@ import { base64ToBytes, bytesToBase64 } from "../engines/dump.ts"
 export class SyncController extends Context.Tag("app/SyncController")<
   SyncController,
   {
-    readonly push: (id: string, format: SyncFormat, engine: EngineType) => Effect.Effect<void, SyncError>
+    readonly push: (
+      id: string,
+      format: SyncFormat,
+      engine: EngineType,
+      name?: string
+    ) => Effect.Effect<void, SyncError>
     readonly pull: (id: string) => Effect.Effect<void, SyncError>
     readonly startInterval: (
       id: string,
       seconds: number,
       format: SyncFormat,
-      engine: EngineType
+      engine: EngineType,
+      name?: string
     ) => Effect.Effect<void>
     readonly stop: (id: string) => Effect.Effect<void>
     readonly notifyChange: (
       id: string,
       debounceMs: number,
       format: SyncFormat,
-      engine: EngineType
+      engine: EngineType,
+      name?: string
     ) => Effect.Effect<void>
   }
 >() {}
@@ -50,7 +57,7 @@ export const SyncControllerLive = Layer.effect(
         yield* Ref.update(ref, HashMap.remove(id))
       })
 
-    const push = (id: string, format: SyncFormat, engine: EngineType) =>
+    const push = (id: string, format: SyncFormat, engine: EngineType, name?: string) =>
       Effect.gen(function* () {
         const db = yield* hub.get(id).pipe(Effect.mapError((e) => new SyncError({ message: e.message })))
         const sqlDump =
@@ -64,7 +71,7 @@ export const SyncControllerLive = Layer.effect(
         yield* client.sync
           .push({
             path: { connectionId: id },
-            payload: { engine, format, sqlDump, binaryBase64 }
+            payload: { engine, format, sqlDump, binaryBase64, name }
           })
           .pipe(Effect.mapError((e) => new SyncError({ message: String(e) })))
       })
@@ -84,19 +91,19 @@ export const SyncControllerLive = Layer.effect(
         }
       })
 
-    const startInterval = (id: string, seconds: number, format: SyncFormat, engine: EngineType) =>
+    const startInterval = (id: string, seconds: number, format: SyncFormat, engine: EngineType, name?: string) =>
       Effect.gen(function* () {
         yield* stopMap(intervalFibers, id)
-        const fiber = yield* Effect.forkDaemon(intervalSync(push(id, format, engine).pipe(Effect.ignore), seconds))
+        const fiber = yield* Effect.forkDaemon(intervalSync(push(id, format, engine, name).pipe(Effect.ignore), seconds))
         yield* Ref.update(intervalFibers, HashMap.set(id, fiber))
       })
 
-    const notifyChange = (id: string, debounceMs: number, format: SyncFormat, engine: EngineType) =>
+    const notifyChange = (id: string, debounceMs: number, format: SyncFormat, engine: EngineType, name?: string) =>
       Effect.gen(function* () {
         yield* stopMap(debounceFibers, id)
         const autoFormat: SyncFormat = format === "sql" ? "binary" : format === "both" ? "binary" : format
         const fiber = yield* Effect.fork(
-          debouncedSync(push(id, autoFormat, engine).pipe(Effect.ignore), debounceMs)
+          debouncedSync(push(id, autoFormat, engine, name).pipe(Effect.ignore), debounceMs)
         )
         yield* Ref.update(debounceFibers, HashMap.set(id, fiber))
       })

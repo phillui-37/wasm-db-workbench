@@ -78,7 +78,8 @@ export const SyncPush = Schema.Struct({
   engine: EngineType,
   format: SyncFormat,
   sqlDump: Schema.optional(Schema.String),
-  binaryBase64: Schema.optional(Schema.String)
+  binaryBase64: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String)
 })
 export type SyncPush = Schema.Schema.Type<typeof SyncPush>
 

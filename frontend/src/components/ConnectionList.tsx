@@ -9,8 +9,7 @@ import {
   ListItemText,
   MenuItem,
   Stack,
-  TextField,
-  Typography
+  TextField
 } from "@mui/material"
 import type { AppConfig, ConnectionMeta, EngineType } from "@workbench/shared"
 import { useState } from "react"
@@ -46,9 +45,6 @@ export const ConnectionList = ({
   const visible = connections.filter((c) => c.name.toLowerCase().includes(filter.toLowerCase()))
   return (
     <section>
-      <Typography variant="overline" color="text.secondary">
-        Connections
-      </Typography>
       <Stack spacing={1} className="mt-1">
         <TextField size="small" placeholder="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} />
         <TextField size="small" placeholder="name" value={newName} onChange={(e) => onNewName(e.target.value)} />

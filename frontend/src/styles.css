@@ -13,3 +13,8 @@ body,
 .overflow-guard {
   height: 100% !important;
 }
+
+.monaco-editor .overflowingContentWidgets,
+.monaco-editor .overflow-widgets {
+  z-index: 40;
+}
