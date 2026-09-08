@@ -4,12 +4,14 @@ import {
   ConfigParseError,
   PathUnsafeError,
   ScriptNotFound,
+  workspaceId,
   type Script
 } from "@workbench/shared"
 import { Context, Effect, Layer } from "effect"
 import { ConfigService } from "./config-service.ts"
 import { mtimeMs } from "./fs-meta.ts"
 import { assertSafeSegment, joinSafe } from "./paths.ts"
+import { workspaceCandidates } from "./workspace.ts"
 
 export type ScriptErr = PathUnsafeError | ScriptNotFound | ConfigParseError | ConfigIoError
 
@@ -34,11 +36,23 @@ export const makeScriptStore = Effect.gen(function* () {
   const path = yield* Path.Path
   const config = yield* ConfigService
 
-  const dirFor = (connectionId: string) =>
+  const canonicalDir = (connectionId: string) =>
     Effect.gen(function* () {
       const cfg = yield* config.get
       yield* assertSafeSegment(connectionId)
-      return yield* joinSafe(path, cfg.storage.scriptsDir, connectionId)
+      const workspace = workspaceId(connectionId)
+      yield* assertSafeSegment(workspace)
+      const dir = yield* joinSafe(path, cfg.storage.scriptsDir, workspace)
+      yield* fs.makeDirectory(dir, { recursive: true }).pipe(Effect.mapError(io))
+      return { dir, workspace }
+    })
+
+  const hitsFor = (connectionId: string) =>
+    Effect.gen(function* () {
+      const cfg = yield* config.get
+      yield* assertSafeSegment(connectionId)
+      const workspace = workspaceId(connectionId)
+      return yield* workspaceCandidates(fs, path, cfg.storage.scriptsDir, workspace)
     })
 
   const pinnedPath = (dir: string) => path.join(dir, "_pinned.json")
@@ -59,29 +73,36 @@ export const makeScriptStore = Effect.gen(function* () {
 
   const list = (connectionId: string) =>
     Effect.gen(function* () {
-      const dir = yield* dirFor(connectionId)
-      const names = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as Array<string>))
-      const pinned = yield* readPinned(dir)
-      const pinnedSet = new Set(pinned)
-      const sqlFiles = names.filter((file) => file.endsWith(".sql"))
-      const scripts = yield* Effect.forEach(
-        sqlFiles,
-        (file) =>
-          Effect.gen(function* () {
-            const full = path.join(dir, file)
-            const sql = yield* fs.readFileString(full).pipe(Effect.mapError(io))
-            const stat = yield* fs.stat(full).pipe(Effect.mapError(io))
-            const name = file.replace(/\.sql$/, "")
-            return {
-              connectionId,
+      const workspace = workspaceId(connectionId)
+      const hits = yield* hitsFor(connectionId)
+      const byName = new Map<string, Script>()
+      const pinnedSet = new Set<string>()
+      for (const hit of hits) {
+        const names = yield* fs.readDirectory(hit.dir).pipe(Effect.orElseSucceed(() => [] as Array<string>))
+        for (const name of yield* readPinned(hit.dir)) pinnedSet.add(name)
+        const sqlFiles = names.filter((file) => file.endsWith(".sql"))
+        for (const file of sqlFiles) {
+          const full = path.join(hit.dir, file)
+          const sql = yield* fs.readFileString(full).pipe(Effect.mapError(io))
+          const stat = yield* fs.stat(full).pipe(Effect.mapError(io))
+          const name = file.replace(/\.sql$/, "")
+          const updatedAt = mtimeMs(stat)
+          const current = byName.get(name)
+          if (!current || updatedAt >= current.updatedAt) {
+            byName.set(name, {
+              connectionId: workspace,
               name,
               sql,
-              updatedAt: mtimeMs(stat),
-              pinned: pinnedSet.has(name) ? true : undefined
-            } satisfies Script
-          }),
-        { concurrency: "unbounded" }
-      )
+              updatedAt,
+              pinned: undefined
+            })
+          }
+        }
+      }
+      const scripts = [...byName.values()].map((script) => ({
+        ...script,
+        pinned: pinnedSet.has(script.name) ? true : undefined
+      }))
       return scripts.sort(
         (a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || a.name.localeCompare(b.name)
       )
@@ -90,8 +111,7 @@ export const makeScriptStore = Effect.gen(function* () {
   const put = (connectionId: string, name: string, sql: string, pinned?: boolean) =>
     Effect.gen(function* () {
       yield* assertSafeSegment(name)
-      const dir = yield* dirFor(connectionId)
-      yield* fs.makeDirectory(dir, { recursive: true }).pipe(Effect.mapError(io))
+      const { dir, workspace } = yield* canonicalDir(connectionId)
       const full = yield* joinSafe(path, dir, `${name}.sql`)
       yield* fs.writeFileString(full, sql).pipe(Effect.mapError(io))
       let nextPinned: Array<string> | undefined
@@ -104,7 +124,7 @@ export const makeScriptStore = Effect.gen(function* () {
         nextPinned = yield* readPinned(dir)
       }
       return {
-        connectionId,
+        connectionId: workspace,
         name,
         sql,
         updatedAt: Date.now(),
@@ -115,15 +135,20 @@ export const makeScriptStore = Effect.gen(function* () {
   const remove = (connectionId: string, name: string) =>
     Effect.gen(function* () {
       yield* assertSafeSegment(name)
-      const dir = yield* dirFor(connectionId)
-      const full = yield* joinSafe(path, dir, `${name}.sql`)
-      const exists = yield* fs.exists(full).pipe(Effect.mapError(io))
-      if (!exists) {
-        return yield* Effect.fail(new ScriptNotFound({ connectionId, name }))
+      const hits = yield* hitsFor(connectionId)
+      let found = false
+      for (const hit of hits) {
+        const full = yield* joinSafe(path, hit.dir, `${name}.sql`)
+        const exists = yield* fs.exists(full).pipe(Effect.mapError(io))
+        if (!exists) continue
+        found = true
+        yield* fs.remove(full).pipe(Effect.mapError(io))
+        const current = yield* readPinned(hit.dir)
+        if (current.includes(name)) yield* writePinned(hit.dir, current.filter((n) => n !== name))
       }
-      yield* fs.remove(full).pipe(Effect.mapError(io))
-      const current = yield* readPinned(dir)
-      if (current.includes(name)) yield* writePinned(dir, current.filter((n) => n !== name))
+      if (!found) {
+        return yield* Effect.fail(new ScriptNotFound({ connectionId: workspaceId(connectionId), name }))
+      }
     })
 
   return ScriptStore.of({ list, put, remove })

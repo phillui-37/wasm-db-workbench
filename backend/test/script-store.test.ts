@@ -5,6 +5,7 @@ import { defaultAppConfig, PathUnsafeError } from "@workbench/shared"
 import { ConfigProvider, Effect, Layer } from "effect"
 import { stringify } from "yaml"
 import { ScriptStore } from "../src/script-store.ts"
+import { ConfigService } from "../src/config-service.ts"
 import { StoresLive } from "../src/layers.ts"
 
 const withStores = <A, E, R>(program: Effect.Effect<A, E, R>) =>
@@ -41,6 +42,25 @@ describe("ScriptStore", () => {
         yield* scripts.remove("demo", "init")
         yield* scripts.remove("demo", "fav")
         expect(yield* scripts.list("demo")).toHaveLength(0)
+      })
+    )
+  )
+
+  it.scoped("lists scripts from leftover session folders under the shared workspace", () =>
+    withStores(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const scripts = yield* ScriptStore
+        const config = yield* ConfigService
+        const cfg = yield* config.get
+        yield* fs.makeDirectory(`${cfg.storage.scriptsDir}/local_maap`, { recursive: true })
+        yield* fs.writeFileString(`${cfg.storage.scriptsDir}/local_maap/init.sql`, "SELECT 1")
+        const listed = yield* scripts.list("local")
+        expect(listed).toHaveLength(1)
+        expect(listed[0]?.name).toBe("init")
+        expect(listed[0]?.sql).toBe("SELECT 1")
+        yield* scripts.put("local", "next", "SELECT 2")
+        expect(yield* fs.exists(`${cfg.storage.scriptsDir}/local/next.sql`)).toBe(true)
       })
     )
   )

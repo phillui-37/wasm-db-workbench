@@ -3,12 +3,14 @@ import {
   ConfigIoError,
   ConfigParseError,
   PathUnsafeError,
+  workspaceId,
   type ConnectionMeta,
   type EngineType
 } from "@workbench/shared"
 import { Context, Effect, Layer } from "effect"
 import { ConfigService } from "./config-service.ts"
 import { assertSafeSegment, joinSafe } from "./paths.ts"
+import { hostedWorkspaces, workspaceCandidates } from "./workspace.ts"
 
 export type ConnectionErr = PathUnsafeError | ConfigParseError | ConfigIoError
 
@@ -40,6 +42,11 @@ const parseCatalog = (raw: string): Array<ConnectionMeta> => {
   }
 }
 
+const canonicalize = (item: ConnectionMeta): ConnectionMeta => {
+  const id = workspaceId(item.id, item.name)
+  return { id, name: item.name, engine: item.engine }
+}
+
 export const makeConnectionStore = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
@@ -60,67 +67,55 @@ export const makeConnectionStore = Effect.gen(function* () {
   const writeCatalog = (dataDir: string, list: ReadonlyArray<ConnectionMeta>) =>
     fs.writeFileString(catalogPath(dataDir), JSON.stringify(list)).pipe(Effect.mapError(io))
 
-  const childDirs = (root: string) =>
-    Effect.gen(function* () {
-      const names = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => [] as Array<string>))
-      const out: Array<string> = []
-      for (const name of names) {
-        if (name.startsWith("_") || name.startsWith(".")) continue
-        if (!/^[A-Za-z0-9._-]+$/.test(name)) continue
-        const full = path.join(root, name)
-        const info = yield* fs.stat(full).pipe(Effect.orElseSucceed(() => undefined))
-        if (info?.type === "Directory") out.push(name)
-      }
-      return out
-    })
-
-  const readMeta = (dataDir: string, id: string) =>
-    Effect.gen(function* () {
-      const raw = yield* fs.readFileString(path.join(dataDir, id, "meta.json")).pipe(Effect.orElseSucceed(() => ""))
-      if (!raw) return { engine: "pglite" as const, name: id }
-      try {
-        const parsed = JSON.parse(raw) as { engine?: unknown; name?: unknown }
-        return {
-          engine: isEngine(parsed.engine) ? parsed.engine : ("pglite" as const),
-          name: typeof parsed.name === "string" && parsed.name ? parsed.name : id
-        }
-      } catch {
-        return { engine: "pglite" as const, name: id }
-      }
-    })
-
   const list = Effect.gen(function* () {
     const { dataDir, scriptsDir } = yield* dirs
     const catalog = yield* readCatalog(dataDir)
     const byId = new Map<string, ConnectionMeta>()
-    for (const id of yield* childDirs(dataDir)) {
-      const meta = yield* readMeta(dataDir, id)
-      byId.set(id, { id, name: meta.name, engine: meta.engine })
+    for (const hit of yield* hostedWorkspaces(fs, path, dataDir)) {
+      byId.set(hit.id, { id: hit.id, name: hit.name, engine: hit.engine })
     }
-    for (const id of yield* childDirs(scriptsDir)) {
-      if (!byId.has(id)) byId.set(id, { id, name: id, engine: "pglite" })
+    for (const hit of yield* hostedWorkspaces(fs, path, scriptsDir)) {
+      if (!byId.has(hit.id)) byId.set(hit.id, { id: hit.id, name: hit.name, engine: hit.engine })
     }
-    for (const item of catalog) byId.set(item.id, item)
+    for (const item of catalog) {
+      const next = canonicalize(item)
+      const current = byId.get(next.id)
+      byId.set(next.id, current ? { ...current, name: next.name, engine: next.engine } : next)
+    }
     return [...byId.values()]
   })
 
   const putAll = (items: ReadonlyArray<ConnectionMeta>) =>
     Effect.gen(function* () {
-      for (const item of items) yield* assertSafeSegment(item.id)
+      const canonical = items.map(canonicalize)
+      for (const item of canonical) yield* assertSafeSegment(item.id)
+      const current = yield* list
+      const byId = new Map<string, ConnectionMeta>()
+      for (const item of current) byId.set(item.id, item)
+      for (const item of canonical) byId.set(item.id, item)
+      const merged = [...byId.values()]
       const { dataDir } = yield* dirs
-      yield* writeCatalog(dataDir, items)
-      return [...items]
+      yield* writeCatalog(dataDir, merged)
+      return merged
     })
 
   const remove = (connectionId: string) =>
     Effect.gen(function* () {
       yield* assertSafeSegment(connectionId)
+      const workspace = workspaceId(connectionId)
       const { dataDir, scriptsDir } = yield* dirs
-      const dataPath = yield* joinSafe(path, dataDir, connectionId)
-      const scriptsPath = yield* joinSafe(path, scriptsDir, connectionId)
-      yield* fs.remove(dataPath, { recursive: true, force: true }).pipe(Effect.mapError(io))
-      yield* fs.remove(scriptsPath, { recursive: true, force: true }).pipe(Effect.mapError(io))
-      const next = (yield* readCatalog(dataDir)).filter((item) => item.id !== connectionId)
+      const dataHits = yield* workspaceCandidates(fs, path, dataDir, workspace)
+      const scriptHits = yield* workspaceCandidates(fs, path, scriptsDir, workspace)
+      for (const hit of [...dataHits, ...scriptHits]) {
+        yield* fs.remove(hit.dir, { recursive: true, force: true }).pipe(Effect.mapError(io))
+      }
+      const exactData = yield* joinSafe(path, dataDir, workspace)
+      const exactScripts = yield* joinSafe(path, scriptsDir, workspace)
+      yield* fs.remove(exactData, { recursive: true, force: true }).pipe(Effect.mapError(io))
+      yield* fs.remove(exactScripts, { recursive: true, force: true }).pipe(Effect.mapError(io))
+      const next = (yield* readCatalog(dataDir))
+        .map(canonicalize)
+        .filter((item) => item.id !== workspace)
       yield* writeCatalog(dataDir, next)
     })
 

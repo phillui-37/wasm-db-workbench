@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { defaultAppConfig } from "@workbench/shared"
 import { ConfigProvider, Effect, Layer } from "effect"
 import { stringify } from "yaml"
+import { ConfigService } from "../src/config-service.ts"
 import { StoresLive } from "../src/layers.ts"
 import { SyncStore } from "../src/sync-store.ts"
 
@@ -43,6 +44,47 @@ describe("SyncStore", () => {
         const files = yield* sync.files("conn1")
         expect(files.some((f) => f.name === "dump.sql")).toBe(true)
         expect(files.some((f) => f.name === "db.sqlite")).toBe(true)
+      })
+    )
+  )
+
+  it.scoped("pulls leftover session folders through the shared workspace id", () =>
+    withStores(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const sync = yield* SyncStore
+        const config = yield* ConfigService
+        const cfg = yield* config.get
+        yield* fs.makeDirectory(`${cfg.storage.dataDir}/local_maap`, { recursive: true })
+        yield* fs.writeFileString(`${cfg.storage.dataDir}/local_maap/dump.sql`, "CREATE TABLE t(id int);")
+        yield* fs.writeFileString(
+          `${cfg.storage.dataDir}/local_maap/meta.json`,
+          JSON.stringify({ engine: "pglite", name: "local", updatedAt: Date.now() })
+        )
+        const pulled = yield* sync.pull("local")
+        expect(pulled.connectionId).toBe("local")
+        expect(pulled.sqlDump).toContain("CREATE TABLE")
+        const files = yield* sync.files("local_maap")
+        expect(files.some((f) => f.name === "dump.sql")).toBe(true)
+      })
+    )
+  )
+
+  it.scoped("pushes session ids into the canonical workspace folder", () =>
+    withStores(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const sync = yield* SyncStore
+        const config = yield* ConfigService
+        const cfg = yield* config.get
+        yield* sync.push("local_maap", {
+          engine: "pglite",
+          format: "sql",
+          name: "local",
+          sqlDump: "CREATE TABLE t(id int);"
+        })
+        expect(yield* fs.exists(`${cfg.storage.dataDir}/local`)).toBe(true)
+        expect(yield* fs.exists(`${cfg.storage.dataDir}/local_maap`)).toBe(false)
       })
     )
   )

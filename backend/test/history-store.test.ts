@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { defaultAppConfig } from "@workbench/shared"
 import { ConfigProvider, Effect, Layer } from "effect"
 import { stringify } from "yaml"
+import { ConfigService } from "../src/config-service.ts"
 import { HistoryStore } from "../src/history-store.ts"
 import { StoresLive } from "../src/layers.ts"
 
@@ -35,6 +36,47 @@ describe("HistoryStore", () => {
         expect(first.ok).toBe(true)
         const listed = yield* history.list("c1")
         expect(listed[0]?.id).toBe(first.id)
+      })
+    )
+  )
+
+  it.scoped("list does not create a host directory", () =>
+    withStores(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const history = yield* HistoryStore
+        const config = yield* ConfigService
+        const cfg = yield* config.get
+        expect(yield* history.list("ghost")).toHaveLength(0)
+        expect(yield* fs.exists(`${cfg.storage.dataDir}/ghost`)).toBe(false)
+      })
+    )
+  )
+
+  it.scoped("reads leftover session history through the shared workspace", () =>
+    withStores(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const history = yield* HistoryStore
+        const config = yield* ConfigService
+        const cfg = yield* config.get
+        yield* fs.makeDirectory(`${cfg.storage.dataDir}/local_maap`, { recursive: true })
+        yield* fs.writeFileString(
+          `${cfg.storage.dataDir}/local_maap/history.json`,
+          JSON.stringify([
+            {
+              id: "h1",
+              connectionId: "local_maap",
+              sql: "SELECT 1",
+              executedAt: 1,
+              durationMs: 1,
+              ok: true
+            }
+          ])
+        )
+        const listed = yield* history.list("local")
+        expect(listed[0]?.id).toBe("h1")
+        expect(listed[0]?.connectionId).toBe("local")
       })
     )
   )

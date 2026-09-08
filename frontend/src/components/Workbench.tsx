@@ -2,7 +2,12 @@ import {
   analyzeSql,
   applyMaxRows,
   applyParams,
+  connectionSlug,
+  connectionsFingerprint,
   defaultAppConfig,
+  findExistingConnection,
+  isHostDumpFile,
+  workspaceId,
   lastResult,
   qualifyTable,
   statementAtOffset,
@@ -47,7 +52,8 @@ type TabState =
 
 const loadConnections = (): Array<ConnectionMeta> => {
   try {
-    return JSON.parse(localStorage.getItem("workbench.connections") ?? "[]") as Array<ConnectionMeta>
+    const parsed = JSON.parse(localStorage.getItem("workbench.connections") ?? "[]") as Array<ConnectionMeta>
+    return mergeConnections(Array.isArray(parsed) ? parsed : [], [])
   } catch {
     return []
   }
@@ -57,20 +63,30 @@ const saveConnections = (list: Array<ConnectionMeta>) => {
   localStorage.setItem("workbench.connections", JSON.stringify(list))
 }
 
+const canonicalizeConnection = (item: ConnectionMeta): ConnectionMeta => ({
+  ...item,
+  id: workspaceId(item.id, item.name)
+})
+
 const mergeConnections = (local: Array<ConnectionMeta>, remote: Array<ConnectionMeta>) => {
   const byId = new Map<string, ConnectionMeta>()
-  for (const item of remote) byId.set(item.id, item)
+  for (const item of remote) {
+    const next = canonicalizeConnection(item)
+    byId.set(next.id, next)
+  }
   for (const item of local) {
-    if (!byId.has(item.id)) byId.set(item.id, item)
+    const next = canonicalizeConnection(item)
+    if (byId.has(next.id)) continue
+    byId.set(next.id, next)
   }
   return [...byId.values()]
 }
 
 const ACTIVE_ID_KEY = "workbench.activeId"
-const loadActiveId = (): string | undefined => localStorage.getItem(ACTIVE_ID_KEY) ?? undefined
-
-const slug = (name: string) =>
-  `${name.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "db"}_${Math.random().toString(36).slice(2, 6)}`
+const loadActiveId = (): string | undefined => {
+  const saved = localStorage.getItem(ACTIVE_ID_KEY)
+  return saved ? workspaceId(saved) : undefined
+}
 
 export const Workbench = ({
   authUsername,
@@ -148,7 +164,13 @@ export const Workbench = ({
   useEffect(() => {
     saveConnections(connections)
     if (!hostCatalogReady.current) return
-    void withClient((client) => client.connections.put({ payload: connections })).catch(() => undefined)
+    void withClient((client) => client.connections.put({ payload: connections }))
+      .then((full) => {
+        const next = [...full]
+        if (connectionsFingerprint(next) === connectionsFingerprint(connections)) return
+        setConnections(next)
+      })
+      .catch(() => undefined)
   }, [connections])
 
   useEffect(() => {
@@ -172,8 +194,12 @@ export const Workbench = ({
         const files = yield* client.sync.files({ path: { connectionId: meta.id } }).pipe(
           Effect.orElseSucceed(() => [] as Array<{ name: string }>)
         )
-        if (files.length > 0) {
+        const dumpReady = files.some((file) => isHostDumpFile(file.name))
+        if (dumpReady) {
+          const localCatalog = yield* engine.introspect.pipe(Effect.orElseSucceed(() => ({ schemas: [], tables: [] })))
+          const empty = localCatalog.tables.length === 0
           const shouldPull =
+            empty ||
             cfg.sync.pullOnOpen === "always" ||
             (cfg.sync.pullOnOpen === "prompt" && confirm(`Pull host dump for ${meta.name}?`))
           if (shouldPull) yield* sync.pull(meta.id).pipe(Effect.ignore)
@@ -211,10 +237,14 @@ export const Workbench = ({
         if (autoOpened.current) return
         autoOpened.current = true
         const saved = loadActiveId()
-        const meta = merged.find((c) => c.id === saved) ?? merged[0]
+        const savedWorkspace = saved ? workspaceId(saved) : undefined
+        const meta =
+          merged.find((c) => c.id === saved) ??
+          merged.find((c) => c.id === savedWorkspace) ??
+          merged[0]
         if (meta) selectConnection(meta)
       })
-    ).catch(() => undefined)
+    ).catch((e) => setMessage(`Host catalog failed: ${String(e)}`))
   }, [])
 
   const createConnection = () => {
@@ -222,7 +252,14 @@ export const Workbench = ({
       setMessage(`${newEngine} is disabled in config`)
       return
     }
-    const meta: ConnectionMeta = { id: slug(newName), name: newName, engine: newEngine }
+    const name = newName.trim() || "db"
+    const existing = findExistingConnection(connections, name)
+    if (existing) {
+      selectConnection(existing)
+      setSnack(`Opened ${existing.name}`)
+      return
+    }
+    const meta: ConnectionMeta = { id: connectionSlug(name), name, engine: newEngine }
     setConnections((list) => [...list, meta])
     selectConnection(meta)
   }

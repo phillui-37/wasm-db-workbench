@@ -4,6 +4,7 @@ import {
   ConfigParseError,
   PathUnsafeError,
   SyncNotFound,
+  workspaceId,
   type HostFile,
   type SyncPayload,
   type SyncPush
@@ -12,6 +13,7 @@ import { Context, Effect, Layer } from "effect"
 import { ConfigService } from "./config-service.ts"
 import { mtimeMs, sizeNum } from "./fs-meta.ts"
 import { assertSafeSegment, joinSafe } from "./paths.ts"
+import { resolveWorkspaceDir } from "./workspace.ts"
 
 export type SyncErr = PathUnsafeError | SyncNotFound | ConfigParseError | ConfigIoError
 
@@ -33,13 +35,23 @@ export const makeSyncStore = Effect.gen(function* () {
   const path = yield* Path.Path
   const config = yield* ConfigService
 
-  const dirFor = (connectionId: string) =>
+  const canonicalDir = (connectionId: string, name?: string) =>
     Effect.gen(function* () {
       const cfg = yield* config.get
       yield* assertSafeSegment(connectionId)
-      const dir = yield* joinSafe(path, cfg.storage.dataDir, connectionId)
+      const workspace = workspaceId(connectionId, name)
+      yield* assertSafeSegment(workspace)
+      const dir = yield* joinSafe(path, cfg.storage.dataDir, workspace)
       yield* fs.makeDirectory(dir, { recursive: true }).pipe(Effect.mapError(io))
-      return dir
+      return { dir, workspace }
+    })
+
+  const existingDir = (connectionId: string) =>
+    Effect.gen(function* () {
+      const cfg = yield* config.get
+      yield* assertSafeSegment(connectionId)
+      const workspace = workspaceId(connectionId)
+      return yield* resolveWorkspaceDir(fs, path, cfg.storage.dataDir, workspace)
     })
 
   const writeMaybe = (file: string, contents: string | undefined) =>
@@ -57,7 +69,7 @@ export const makeSyncStore = Effect.gen(function* () {
 
   const push = (connectionId: string, body: SyncPush) =>
     Effect.gen(function* () {
-      const dir = yield* dirFor(connectionId)
+      const { dir, workspace } = yield* canonicalDir(connectionId, body.name)
       if (body.format === "sql" || body.format === "both") {
         yield* writeMaybe(path.join(dir, "dump.sql"), body.sqlDump)
       }
@@ -67,11 +79,11 @@ export const makeSyncStore = Effect.gen(function* () {
       yield* fs
         .writeFileString(
           path.join(dir, "meta.json"),
-          JSON.stringify({ engine: body.engine, name: body.name, updatedAt: Date.now() })
+          JSON.stringify({ engine: body.engine, name: body.name ?? workspace, updatedAt: Date.now() })
         )
         .pipe(Effect.mapError(io))
       return {
-        connectionId,
+        connectionId: workspace,
         engine: body.engine,
         sqlDump: body.sqlDump,
         binaryBase64: body.binaryBase64
@@ -95,9 +107,9 @@ export const makeSyncStore = Effect.gen(function* () {
 
   const pull = (connectionId: string) =>
     Effect.gen(function* () {
-      const cfg = yield* config.get
-      yield* assertSafeSegment(connectionId)
-      const dir = yield* joinSafe(path, cfg.storage.dataDir, connectionId)
+      const workspace = workspaceId(connectionId)
+      const dir = yield* existingDir(connectionId)
+      if (!dir) return yield* Effect.fail(new SyncNotFound({ connectionId: workspace }))
       const metaRaw = yield* fs.readFileString(path.join(dir, "meta.json")).pipe(Effect.orElseSucceed(() => undefined))
       const sqlDump = yield* readOptionalString(path.join(dir, "dump.sql"))
       let engine: SyncPush["engine"] | undefined
@@ -114,16 +126,15 @@ export const makeSyncStore = Effect.gen(function* () {
       }
       const binaryBase64 = yield* readOptionalBase64(path.join(dir, binaryName(engine)))
       if (!metaRaw && sqlDump === undefined && binaryBase64 === undefined) {
-        return yield* Effect.fail(new SyncNotFound({ connectionId }))
+        return yield* Effect.fail(new SyncNotFound({ connectionId: workspace }))
       }
-      return { connectionId, engine, sqlDump, binaryBase64 } satisfies SyncPayload
+      return { connectionId: workspace, engine, sqlDump, binaryBase64 } satisfies SyncPayload
     })
 
   const files = (connectionId: string) =>
     Effect.gen(function* () {
-      const cfg = yield* config.get
-      yield* assertSafeSegment(connectionId)
-      const dir = yield* joinSafe(path, cfg.storage.dataDir, connectionId)
+      const dir = yield* existingDir(connectionId)
+      if (!dir) return [] as Array<HostFile>
       const names = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as Array<string>))
       const out: Array<HostFile> = []
       for (const name of names) {

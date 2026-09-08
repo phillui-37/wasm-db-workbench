@@ -78,7 +78,7 @@ export const ConnectionList = ({
             }
           >
             <ListItemButton selected={c.id === activeId} onClick={() => onSelect(c)}>
-              <ListItemText primary={c.name} secondary={c.engine} />
+              <ListItemText primary={c.name} secondary={c.id === c.name ? c.engine : `${c.engine} · ${c.id}`} />
             </ListItemButton>
           </ListItem>
         ))}
