@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest"
-import { connectionSlug, findExistingConnection, isHostDumpFile, workspaceId } from "@workbench/shared"
+import { connectionSlug, findExistingConnection, isHostDumpFile, isHostPayloadFile, workspaceId } from "@workbench/shared"
 import { Effect } from "effect"
 
 describe("connection ids", () => {
@@ -36,7 +36,10 @@ describe("connection ids", () => {
   it.effect("recognizes host dump artifacts", () =>
     Effect.sync(() => {
       expect(isHostDumpFile("dump.sql")).toBe(true)
+      expect(isHostDumpFile("meta.json")).toBe(true)
       expect(isHostDumpFile("history.json")).toBe(false)
+      expect(isHostPayloadFile("dump.sql")).toBe(true)
+      expect(isHostPayloadFile("meta.json")).toBe(false)
     })
   )
 })

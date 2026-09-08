@@ -1,5 +1,5 @@
 import { FileSystem, Path } from "@effect/platform"
-import { isHostDumpFile, workspaceId, type EngineType } from "@workbench/shared"
+import { isHostDumpFile, isHostPayloadFile, workspaceId, type EngineType } from "@workbench/shared"
 import { Effect } from "effect"
 import { mtimeMs } from "./fs-meta.ts"
 
@@ -87,6 +87,10 @@ export const resolveWorkspaceDir = (
 ): Effect.Effect<string | undefined, never> =>
   Effect.gen(function* () {
     const hits = yield* workspaceCandidates(fs, path, root, workspace)
+    for (const hit of hits) {
+      const entries = yield* fs.readDirectory(hit.dir).pipe(Effect.orElseSucceed(() => [] as Array<string>))
+      if (entries.some((file) => isHostPayloadFile(file))) return hit.dir
+    }
     return hits[0]?.dir
   })
 

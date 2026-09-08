@@ -35,11 +35,11 @@ export const makeSyncStore = Effect.gen(function* () {
   const path = yield* Path.Path
   const config = yield* ConfigService
 
-  const canonicalDir = (connectionId: string, name?: string) =>
+  const canonicalDir = (connectionId: string) =>
     Effect.gen(function* () {
       const cfg = yield* config.get
       yield* assertSafeSegment(connectionId)
-      const workspace = workspaceId(connectionId, name)
+      const workspace = workspaceId(connectionId)
       yield* assertSafeSegment(workspace)
       const dir = yield* joinSafe(path, cfg.storage.dataDir, workspace)
       yield* fs.makeDirectory(dir, { recursive: true }).pipe(Effect.mapError(io))
@@ -69,7 +69,7 @@ export const makeSyncStore = Effect.gen(function* () {
 
   const push = (connectionId: string, body: SyncPush) =>
     Effect.gen(function* () {
-      const { dir, workspace } = yield* canonicalDir(connectionId, body.name)
+      const { dir, workspace } = yield* canonicalDir(connectionId)
       if (body.format === "sql" || body.format === "both") {
         yield* writeMaybe(path.join(dir, "dump.sql"), body.sqlDump)
       }

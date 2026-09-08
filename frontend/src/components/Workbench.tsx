@@ -6,7 +6,7 @@ import {
   connectionsFingerprint,
   defaultAppConfig,
   findExistingConnection,
-  isHostDumpFile,
+  isHostPayloadFile,
   workspaceId,
   lastResult,
   qualifyTable,
@@ -65,7 +65,7 @@ const saveConnections = (list: Array<ConnectionMeta>) => {
 
 const canonicalizeConnection = (item: ConnectionMeta): ConnectionMeta => ({
   ...item,
-  id: workspaceId(item.id, item.name)
+  id: workspaceId(item.id)
 })
 
 const mergeConnections = (local: Array<ConnectionMeta>, remote: Array<ConnectionMeta>) => {
@@ -186,15 +186,12 @@ export const Workbench = ({
       yield* hub.open(meta.id, engine)
       const cfg = configRef.current
       const sync = yield* SyncController
-      if (cfg.sync.trigger === "interval") {
-        yield* sync.startInterval(meta.id, cfg.sync.intervalSeconds, cfg.sync.format, meta.engine, meta.name)
-      }
       if (cfg.sync.pullOnOpen !== "never") {
         const client = yield* WorkbenchClient
         const files = yield* client.sync.files({ path: { connectionId: meta.id } }).pipe(
           Effect.orElseSucceed(() => [] as Array<{ name: string }>)
         )
-        const dumpReady = files.some((file) => isHostDumpFile(file.name))
+        const dumpReady = files.some((file) => isHostPayloadFile(file.name))
         if (dumpReady) {
           const localCatalog = yield* engine.introspect.pipe(Effect.orElseSucceed(() => ({ schemas: [], tables: [] })))
           const empty = localCatalog.tables.length === 0
@@ -204,6 +201,9 @@ export const Workbench = ({
             (cfg.sync.pullOnOpen === "prompt" && confirm(`Pull host dump for ${meta.name}?`))
           if (shouldPull) yield* sync.pull(meta.id).pipe(Effect.ignore)
         }
+      }
+      if (cfg.sync.trigger === "interval") {
+        yield* sync.startInterval(meta.id, cfg.sync.intervalSeconds, cfg.sync.format, meta.engine, meta.name)
       }
     })
 

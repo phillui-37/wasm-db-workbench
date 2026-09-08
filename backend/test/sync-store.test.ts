@@ -70,6 +70,45 @@ describe("SyncStore", () => {
     )
   )
 
+  it.scoped("pulls leftover dumps even when an empty canonical folder exists", () =>
+    withStores(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const sync = yield* SyncStore
+        const config = yield* ConfigService
+        const cfg = yield* config.get
+        yield* fs.makeDirectory(`${cfg.storage.dataDir}/local`, { recursive: true })
+        yield* fs.writeFileString(
+          `${cfg.storage.dataDir}/local/meta.json`,
+          JSON.stringify({ engine: "pglite", name: "local", updatedAt: Date.now() })
+        )
+        yield* fs.makeDirectory(`${cfg.storage.dataDir}/local_maap`, { recursive: true })
+        yield* fs.writeFileString(`${cfg.storage.dataDir}/local_maap/dump.sql`, "CREATE TABLE leftover(id int);")
+        const pulled = yield* sync.pull("local")
+        expect(pulled.sqlDump).toContain("leftover")
+      })
+    )
+  )
+
+  it.scoped("keeps the workspace folder when the display name changes", () =>
+    withStores(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const sync = yield* SyncStore
+        const config = yield* ConfigService
+        const cfg = yield* config.get
+        yield* sync.push("local", {
+          engine: "pglite",
+          format: "sql",
+          name: "renamed",
+          sqlDump: "CREATE TABLE t(id int);"
+        })
+        expect(yield* fs.exists(`${cfg.storage.dataDir}/local`)).toBe(true)
+        expect(yield* fs.exists(`${cfg.storage.dataDir}/renamed`)).toBe(false)
+      })
+    )
+  )
+
   it.scoped("pushes session ids into the canonical workspace folder", () =>
     withStores(
       Effect.gen(function* () {

@@ -1,7 +1,9 @@
 import type { ConnectionMeta } from "./schema/models.ts"
 
-export const HOST_DUMP_FILES = new Set(["dump.sql", "db.sqlite", "pgdata.tar.gz", "meta.json"])
+export const HOST_PAYLOAD_FILES = new Set(["dump.sql", "db.sqlite", "pgdata.tar.gz"])
+export const HOST_DUMP_FILES = new Set([...HOST_PAYLOAD_FILES, "meta.json"])
 
+export const isHostPayloadFile = (name: string): boolean => HOST_PAYLOAD_FILES.has(name)
 export const isHostDumpFile = (name: string): boolean => HOST_DUMP_FILES.has(name)
 
 export const connectionSlug = (name: string): string => {

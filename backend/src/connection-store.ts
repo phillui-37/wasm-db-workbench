@@ -43,7 +43,7 @@ const parseCatalog = (raw: string): Array<ConnectionMeta> => {
 }
 
 const canonicalize = (item: ConnectionMeta): ConnectionMeta => {
-  const id = workspaceId(item.id, item.name)
+  const id = workspaceId(item.id)
   return { id, name: item.name, engine: item.engine }
 }
 
