@@ -51,18 +51,15 @@ Serve at `https://wasm-db-workbench.kgy-production.xyz/` — see `deploy/nginx-w
 
 ```nginx
 server {
-  listen 443 ssl http2;
+  listen 443 ssl;
   server_name wasm-db-workbench.kgy-production.xyz;
+  client_max_body_size 256m;
 
-  location / {
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    client_max_body_size 256m;   # sync dumps; default 1m → HTTP 413
-    proxy_pass http://127.0.0.1:8080;
-  }
+  # Leftover URLs from the old /wasm-db-workbench subpath image
+  location = /wasm-db-workbench { return 301 /; }
+  location /wasm-db-workbench/ { proxy_pass http://127.0.0.1:8080/; }
+
+  location / { proxy_pass http://127.0.0.1:8080; }
 }
 ```
 
@@ -80,7 +77,9 @@ AUTH_PASSWORD=your-strong-password
 AUTH_SECRET=long-random-string
 ```
 
-Then `pnpm podman:pull-up`. Open `https://wasm-db-workbench.kgy-production.xyz/` and sign in.
+Then `git pull` and `pnpm podman:pull-up` (pulls `:latest` and recreates the container). Open `https://wasm-db-workbench.kgy-production.xyz/` and sign in.
+
+After CI publishes a new image, the VPS must pull it. Restarting without pull keeps the old frontend, whose HTML still points at `/wasm-db-workbench/assets/...` and the browser reports MIME type `text/html`.
 
 Local dev defaults to `AUTH_ENABLED=false` (no login). To test auth locally:
 

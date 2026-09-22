@@ -7,8 +7,8 @@ source deploy/image.env
 echo "Pulling docker.io/${IMAGE_NAME}:${IMAGE_TAG} ..."
 if podman compose version >/dev/null 2>&1; then
   podman compose -f docker-compose.image.yml pull
-  podman compose -f docker-compose.image.yml up -d
+  podman compose -f docker-compose.image.yml up -d --force-recreate --remove-orphans
 else
   podman-compose -f docker-compose.image.yml pull
-  podman-compose -f docker-compose.image.yml up -d
+  podman-compose -f docker-compose.image.yml up -d --force-recreate --remove-orphans
 fi
