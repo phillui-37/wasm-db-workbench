@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 
 const normalizeViteBase = (raw: string | undefined): string => {
-  const trimmed = (raw ?? "/wasm-db-workbench").trim() || "/"
+  const trimmed = (raw ?? "/").trim() || "/"
   if (trimmed === "/") return "/"
   const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`
   return withSlash.endsWith("/") ? withSlash : `${withSlash}/`

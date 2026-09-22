@@ -1,22 +1,25 @@
-# Example nginx site snippet for https://{domain}/wasm-db-workbench/
+# Example nginx site for https://wasm-db-workbench.kgy-production.xyz/
 #
-# Prefer keeping the path prefix (no strip). The app understands BASE_PATH.
+# Serve the workbench at the subdomain root (no path prefix).
+# App defaults: VITE_BASE_PATH=/, BASE_PATH=/.
 # Do not override Cross-Origin-* headers — the app sets COOP/COEP for WASM.
 
-location = /wasm-db-workbench {
-  return 301 /wasm-db-workbench/;
-}
+server {
+  listen 443 ssl http2;
+  server_name wasm-db-workbench.kgy-production.xyz;
 
-location /wasm-db-workbench/ {
-  proxy_http_version 1.1;
-  proxy_set_header Host $host;
-  proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  proxy_set_header X-Forwarded-Proto $scheme;
-  # Sync posts base64 dumps (PGlite/SQLite); nginx default 1m causes HTTP 413.
-  client_max_body_size 256m;
-  # Keep prefix: app strips BASE_PATH=/wasm-db-workbench itself.
-  # Do not strip cookies; AUTH_COOKIE_SECURE=true expects HTTPS.
-  proxy_pass http://127.0.0.1:8080;
-  proxy_read_timeout 300s;
+  # ssl_certificate / ssl_certificate_key — certbot or your TLS setup
+
+  location / {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # Sync posts base64 dumps (PGlite/SQLite); nginx default 1m causes HTTP 413.
+    client_max_body_size 256m;
+    # Do not strip cookies; AUTH_COOKIE_SECURE=true expects HTTPS.
+    proxy_pass http://127.0.0.1:8080;
+    proxy_read_timeout 300s;
+  }
 }

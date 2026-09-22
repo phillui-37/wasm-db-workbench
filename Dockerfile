@@ -23,7 +23,7 @@ COPY tsconfig.base.json ./
 
 ARG NODE_OPTIONS=--max-old-space-size=2048
 ENV NODE_OPTIONS=$NODE_OPTIONS
-ARG VITE_BASE_PATH=/wasm-db-workbench/
+ARG VITE_BASE_PATH=/
 ENV VITE_BASE_PATH=$VITE_BASE_PATH
 
 RUN pnpm --filter @workbench/frontend build
@@ -42,7 +42,7 @@ ENV CONFIG_PATH=/app/config/app.yaml
 ENV DATA_DIR=/app/data
 ENV SCRIPTS_DIR=/app/scripts
 ENV FRONTEND_DIST=/app/frontend/dist
-ENV BASE_PATH=/wasm-db-workbench
+ENV BASE_PATH=/
 ENV AUTH_ENABLED=true
 ENV AUTH_COOKIE_SECURE=true
 
@@ -66,7 +66,7 @@ ENV CONFIG_PATH=/app/config/app.yaml
 ENV DATA_DIR=/app/data
 ENV SCRIPTS_DIR=/app/scripts
 ENV FRONTEND_DIST=/app/frontend/dist
-ENV BASE_PATH=/wasm-db-workbench
+ENV BASE_PATH=/
 ENV AUTH_ENABLED=true
 ENV AUTH_COOKIE_SECURE=true
 

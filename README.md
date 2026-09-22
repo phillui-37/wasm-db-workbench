@@ -4,6 +4,8 @@ Browser-local SQL workbench for **PGlite** and **SQLite WASM**. Queries run in t
 
 Published image: [`docker.io/philluikgy/wasm-db-workbench`](https://hub.docker.com/r/philluikgy/wasm-db-workbench)
 
+Production: https://wasm-db-workbench.kgy-production.xyz/
+
 ## Quick start (Docker / Podman)
 
 Building the frontend inside the image needs roughly **3GB+ RAM**. On a small VPS the build is OOM-killed (`exit 137`) — pull the published image instead.
@@ -35,7 +37,7 @@ CI: push to `master` (or run **Publish Docker image** workflow) after setting Gi
 pnpm docker:up    # or: pnpm podman:up
 ```
 
-Open http://localhost:8080/wasm-db-workbench/
+Open http://localhost:8080/
 
 Host mounts:
 
@@ -43,24 +45,28 @@ Host mounts:
 - `data/` — binary dumps, SQL dumps, history
 - `scripts/` — saved SQL files
 
-### Nginx (subpath)
+### Nginx (subdomain)
 
-Serve at `https://{domain}/wasm-db-workbench/` — see `deploy/nginx-wasm-db-workbench.conf.example`.
+Serve at `https://wasm-db-workbench.kgy-production.xyz/` — see `deploy/nginx-wasm-db-workbench.conf.example`.
 
 ```nginx
-location = /wasm-db-workbench { return 301 /wasm-db-workbench/; }
-location /wasm-db-workbench/ {
-  proxy_http_version 1.1;
-  proxy_set_header Host $host;
-  proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  proxy_set_header X-Forwarded-Proto $scheme;
-  client_max_body_size 256m;   # sync dumps; default 1m → HTTP 413
-  proxy_pass http://127.0.0.1:8080;   # keep path prefix
+server {
+  listen 443 ssl http2;
+  server_name wasm-db-workbench.kgy-production.xyz;
+
+  location / {
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 256m;   # sync dumps; default 1m → HTTP 413
+    proxy_pass http://127.0.0.1:8080;
+  }
 }
 ```
 
-App defaults: `VITE_BASE_PATH=/wasm-db-workbench/`, `BASE_PATH=/wasm-db-workbench`.
+App defaults: `VITE_BASE_PATH=/`, `BASE_PATH=/`. Optional subpath deploys still work if you set both to the same prefix (for example `/wasm-db-workbench/`) and rebuild the image.
 
 ### Authentication
 
@@ -74,7 +80,7 @@ AUTH_PASSWORD=your-strong-password
 AUTH_SECRET=long-random-string
 ```
 
-Then `pnpm podman:pull-up`. Open `https://{domain}/wasm-db-workbench/` and sign in.
+Then `pnpm podman:pull-up`. Open `https://wasm-db-workbench.kgy-production.xyz/` and sign in.
 
 Local dev defaults to `AUTH_ENABLED=false` (no login). To test auth locally:
 
@@ -89,8 +95,8 @@ npx pnpm install
 npx pnpm dev
 ```
 
-- UI: http://localhost:5173/wasm-db-workbench/
-- API: http://localhost:8080 (`/api`, `/docs`) — Vite proxies `/wasm-db-workbench/api`
+- UI: http://localhost:5173/
+- API: http://localhost:8080 (`/api`, `/docs`) — Vite proxies `/api` and `/docs`
 
 ## Tests
 

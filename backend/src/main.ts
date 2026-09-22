@@ -18,7 +18,7 @@ const HttpLive = Layer.unwrapEffect(
       Config.withDefault(`${repoRoot}/frontend/dist`)
     )
     const basePath = normalizeBasePath(
-      yield* Config.string("BASE_PATH").pipe(Config.withDefault("/wasm-db-workbench"))
+      yield* Config.string("BASE_PATH").pipe(Config.withDefault("/"))
     )
     const authEnabled = yield* Config.boolean("AUTH_ENABLED").pipe(Config.withDefault(false))
     const authUsername = yield* Config.option(Config.string("AUTH_USERNAME"))

@@ -11,7 +11,7 @@ services:
       DATA_DIR: /app/data
       SCRIPTS_DIR: /app/scripts
       FRONTEND_DIST: /app/frontend/dist
-      BASE_PATH: /wasm-db-workbench
+      BASE_PATH: /
       AUTH_ENABLED: "true"
       AUTH_COOKIE_SECURE: "true"
       AUTH_USERNAME: ${AUTH_USERNAME:-admin}
