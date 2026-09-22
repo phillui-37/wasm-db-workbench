@@ -1,7 +1,7 @@
 import { HttpMiddleware, HttpServerRequest } from "@effect/platform"
 import { Effect } from "effect"
 
-/** Normalize to `/wasm-db-workbench` or empty string (no trailing slash). */
+/** Normalize to a prefix like `/wasm-db-workbench`, or empty string for `/` (subdomain / root). */
 export const normalizeBasePath = (raw: string | undefined): string => {
   const trimmed = (raw ?? "").trim()
   if (!trimmed || trimmed === "/") return ""
