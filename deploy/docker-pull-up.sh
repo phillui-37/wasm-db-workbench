@@ -6,4 +6,4 @@ source deploy/image.env
 
 echo "Pulling docker.io/${IMAGE_NAME}:${IMAGE_TAG} ..."
 docker compose -f docker-compose.image.yml pull
-docker compose -f docker-compose.image.yml up -d
+docker compose -f docker-compose.image.yml up -d --force-recreate --remove-orphans

@@ -3,6 +3,7 @@
 services:
   workbench:
     image: docker.io/philluikgy/wasm-db-workbench:latest
+    pull_policy: always
     ports:
       - "8080:8080"
     environment:
